@@ -180,3 +180,4 @@ Object.assign(window.LF_I18N_EN,{
   "外部原单会保留，后续同步可能重新导入。":"The original external record is kept, and a later sync may import it again.",
   "需求已有执行记录或已完成，请确认强制删除":"This requirement has execution history or is already completed. Confirm force deletion."
 });
+Object.assign(window.LF_I18N_EN,{"澄清将使用这位责任人的凭据：":"Clarification runs on this responsible user's credentials:","该框架暂无可用模型，请先在个人配置里添加":"This framework has no model yet; add one in personal settings","需求澄清 · 默认框架与模型":"Requirement clarification · default framework and model","已失效，当前用 CodeBuddy":"No longer available; currently using CodeBuddy","新建需求和需求详情里的澄清默认用它；澄清时可以临时改，临时选择不写回这里。":"Clarification uses this by default in the new-requirement wizard and the issue drawer. You can switch per clarification without changing this setting."});
