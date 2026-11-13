@@ -114,33 +114,129 @@ func mustWriteClarifyFile(t *testing.T, path, body string) {
 }
 
 func TestCanResumeClarifySessionUsesResponsibleUserHome(t *testing.T) {
-	root := t.TempDir()
-	ownerHome := filepath.Join(root, "1", "home")
-	newHome := filepath.Join(root, "13", "home")
-	mustWriteClarifyFile(t, filepath.Join(ownerHome, ".codebuddy", "projects", "repo", "old-session.jsonl"), "conversation\n")
+	base := t.TempDir()
+	ownerRoot := filepath.Join(base, "1")
+	newRoot := filepath.Join(base, "13")
+	// transcript 在 CLI 的 HOME（= Root/home）里，thread / native session 登记簿在 Root。
+	mustWriteClarifyFile(t, filepath.Join(ownerRoot, "home", ".codebuddy", "projects", "repo", "old-session.jsonl"), "conversation\n")
 	for _, tc := range []struct {
 		name        string
-		home        string
+		root        string
 		owner, user int64
 		want        bool
 	}{
-		{"same owner", ownerHome, 1, 1, true},
-		{"changed responsible user", newHome, 1, 13, false},
-		{"legacy same user", ownerHome, 0, 1, true},
-		{"legacy changed user", newHome, 0, 13, false},
-		{"missing file", newHome, 13, 13, false},
-		{"owner mismatch even with file", ownerHome, 13, 1, false},
+		{"same owner", ownerRoot, 1, 1, true},
+		{"changed responsible user", newRoot, 1, 13, false},
+		{"legacy same user", ownerRoot, 0, 1, true},
+		{"legacy changed user", newRoot, 0, 13, false},
+		{"missing file", newRoot, 13, 13, false},
+		{"owner mismatch even with file", ownerRoot, 13, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := canResumeClarifySession(tc.home, "old-session", tc.owner, tc.user); got != tc.want {
+			if got := canResumeClarifySession(tc.root, "codebuddy", "old-session", tc.owner, tc.user); got != tc.want {
 				t.Fatalf("canResume=%v, want %v", got, tc.want)
 			}
 		})
 	}
 	for _, id := range []string{"", "../old-session", "*", "old-session?", ".."} {
-		if canResumeClarifySession(ownerHome, id, 1, 1) {
+		if canResumeClarifySession(ownerRoot, "codebuddy", id, 1, 1) {
 			t.Fatalf("invalid session ID accepted: %q", id)
 		}
+	}
+}
+
+func TestCanResumeClarifySessionPerEngine(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name   string
+		engine string
+		want   bool
+	}{
+		{"codex without a recorded thread", "codex", false},
+		{"opencode without a recorded session", "opencode", false},
+	} {
+		if got := canResumeClarifySession(root, tc.engine, "af-1", 1, 1); got != tc.want {
+			t.Fatalf("%s: canResume=%v, want %v", tc.name, got, tc.want)
+		}
+	}
+	// Claude Code 的 session UUID 由平台 ID 稳定推导，没有可探测的登记簿；会话缺失会以
+	// 错误形式出现，由调用方改为重放历史。
+	if !canResumeClarifySession(root, "claude-code", "af-1", 1, 1) {
+		t.Fatal("claude-code must be treated as resumable from its stable session ID")
+	}
+	// 平台不认识的引擎永不续跑。
+	if canResumeClarifySession(root, "foobar", "af-1", 1, 1) {
+		t.Fatal("unknown engine must not resume")
+	}
+
+	mustWriteClarifyFile(t, codexThreadsPath(root), `{"af-1":"thread-1"}`)
+	if !canResumeClarifySession(root, "codex", "af-1", 1, 1) {
+		t.Fatal("codex must resume once its thread is recorded")
+	}
+	if canResumeClarifySession(root, "codex", "af-2", 1, 1) {
+		t.Fatal("a different clarification session must not borrow the recorded thread")
+	}
+
+	mustWriteClarifyFile(t, agentCLISessionsPath(root), `{"opencode:af-1":"native-1"}`)
+	if !canResumeClarifySession(root, "opencode", "af-1", 1, 1) {
+		t.Fatal("opencode must resume once its native session is recorded")
+	}
+	if canResumeClarifySession(root, "cursor", "af-1", 1, 1) {
+		t.Fatal("another CLI must not reuse opencode's native session")
+	}
+}
+
+func TestClarifySessionReusableRejectsEngineSwitch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteClarifyFile(t, filepath.Join(root, "home", ".codebuddy", "projects", "repo", "af-1.jsonl"), "conversation\n")
+	issue := domain.Issue{ID: "iss-1", Clarification: domain.ClarificationAssessment{
+		SessionID: "af-1", SessionUserID: 1, ModelID: "codex:gpt-5.5",
+	}}
+	if clarifySessionReusable(issue, clarifyEngineOf("default"), "af-1", root, 1) {
+		t.Fatal("a CodeBuddy turn must not resume the session Codex started")
+	}
+	mustWriteClarifyFile(t, codexThreadsPath(root), `{"af-1":"thread-1"}`)
+	if !clarifySessionReusable(issue, clarifyEngineOf("codex:gpt-5.5"), "af-1", root, 1) {
+		t.Fatal("staying on the engine that started the session must keep resuming")
+	}
+	legacy := domain.Issue{ID: "iss-2", Clarification: domain.ClarificationAssessment{
+		SessionID: "af-1", SessionUserID: 1,
+	}}
+	if !clarifySessionReusable(legacy, clarifyEngineOf("default"), "af-1", root, 1) {
+		t.Fatal("assessments saved before engine pinning keep resuming on their transcript")
+	}
+	// 草稿还没建单，会话 ID 靠前端带回来：探测必须用这个有效值，否则每轮都从头重放。
+	draft := domain.Issue{ProjectID: "platform"}
+	if !clarifySessionReusable(draft, clarifyEngineOf("default"), "af-1", root, 1) {
+		t.Fatal("a draft continuation must resume from the session id the client carries")
+	}
+}
+
+func TestRememberClarifySessionStoresModelID(t *testing.T) {
+	st, err := repo.OpenTest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.PutIssue(domain.Issue{ID: "iss-remember", ProjectID: "platform", Title: "记住引擎"}); err != nil {
+		t.Fatal(err)
+	}
+	h := &streamHandlers{deps: &deps{repo: st}}
+	h.rememberClarifySession("iss-remember", "af-1", 7, "codex:gpt-5.5")
+	stored, ok := st.Issue("iss-remember")
+	if !ok {
+		t.Fatal("issue missing")
+	}
+	if stored.Clarification.SessionID != "af-1" || stored.Clarification.SessionUserID != 7 {
+		t.Fatalf("session bookkeeping = %+v", stored.Clarification)
+	}
+	if stored.Clarification.ModelID != "codex:gpt-5.5" {
+		t.Fatalf("ModelID = %q, want codex:gpt-5.5", stored.Clarification.ModelID)
+	}
+	// An empty model ID must not erase the engine a running turn already recorded.
+	h.rememberClarifySession("iss-remember", "af-2", 7, "")
+	if stored, _ = st.Issue("iss-remember"); stored.Clarification.ModelID != "codex:gpt-5.5" {
+		t.Fatalf("empty model ID overwrote the pinned engine: %q", stored.Clarification.ModelID)
 	}
 }
 
@@ -171,8 +267,12 @@ func TestRunClarifyTurnDetectsMissingSessionWithZeroExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &streamHandlers{}
-	_, _, _, err := h.runClarifyTurn(context.Background(), root, bin, "default", "continue", "test", "old-session", root, true,
-		runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "test-key"}}, func(string, any) {}, clarifyTurnOpts{Native: true})
+	_, _, _, err := h.runClarifyTurn(context.Background(), clarifyTurn{
+		WorkDir: root, Engine: clarifyEngineOf("default"), Bin: bin, Prompt: "continue",
+		RunID: "test", SessionID: "old-session", HomeDir: root, Resume: true,
+		Credentials: runtime.RunCredentials{CodeBuddy: runtime.CodeBuddyCredential{APIKey: "test-key"}},
+		Opts:        clarifyTurnOpts{Native: true},
+	}, func(string, any) {})
 	if err == nil || !strings.Contains(err.Error(), "澄清会话不存在") {
 		t.Fatalf("zero-exit missing session must trigger fallback: %v", err)
 	}

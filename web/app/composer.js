@@ -671,9 +671,18 @@ function clearRequirementComposer(){
 function paintRequirementComposerChrome(){
   const picker=$('#reqClarifyModelPicker');
   if(picker){
-    bindClarifyModelPicker(picker);
+    const scope=clarifyScopeForComposer();
+    bindClarifyModelPicker(picker,scope);
     const api=window.AgentFlowAssistantModels,toggle=picker.querySelector('[data-model-toggle]');
-    if(api&&toggle)api.paint(toggle, selectedClarifyModel());
+    if(!api||!toggle)return;
+    const paint=catalog=>{
+      api.paint(toggle, clarifyEffectiveModel(catalog,null));
+      const name=clarifyResponsibleName(catalog);
+      // 向导草稿的责任人是项目 Owner：工具条太窄，把「用谁的凭据」挂在悬停上。
+      toggle.title=name?`澄清将使用这位责任人的凭据：${name}`:'';
+    };
+    paint(clarifyEngineCatalogCached(scope));
+    if(scope)clarifyEngineCatalog(scope).then(paint);
   }
 }
 function resetRequirementComposerState(){
@@ -855,6 +864,7 @@ async function sendChatClarify(retry, explicit){
   persistRequirementComposer();
   try{
     const project=currentProject();
+    const clarifyModel=await clarifyModelForSend(clarifyScopeForComposer(),null);
     const resp=await fetch('/api/chat-clarify',{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({
       projectId:project.id,
       repositoryId:selectedReqRepositoryId(),
@@ -863,7 +873,7 @@ async function sendChatClarify(retry, explicit){
       title:chatHistory[0]?.content?.slice(0,80)||msg.slice(0,80),
       description:chatHistory.filter(h=>h.role==='user').map(h=>h.content).join('\n\n'),
       message:msg,
-      model:selectedClarifyModel(),
+      model:clarifyModel,
       sessionId:chatClarifySessionId,
       jobId:chatClarifyJobId,
       history:chatHistory

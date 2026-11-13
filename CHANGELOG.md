@@ -8,6 +8,15 @@ Platform releases use `vX.Y.Z` tags and publish `ghcr.io/tencent/loopforge`. Loo
 
 Repositories saved earlier with a token in `cloneUrl` keep cloning until they are saved again. Saving one from the studio stores the URL without the token, so first put the Git token in 个人配置, then save the repository. Until then the token also lands in each workspace's `.git/config`, where the agent can read it, so re-save such repositories soon after upgrading.
 
+- Requirement clarification no longer runs only on CodeBuddy. The picker groups every framework the platform offers by engine — CodeBuddy, Codex, Claude Code and the agent CLIs — and the clarification really runs on the one you pick, using the matching credential from personal settings.
+- Availability is judged from the issue's responsible user, because clarification runs on their credentials; a requirement that is not created yet resolves to the project owner, and the wizard names whose credentials will be used in the picker's tooltip. A framework that cannot run is still listed, greyed out as a whole group, with the reason shown: no API key, no Base URL where one is required, the CLI is not installed on this host, or no model is available yet.
+- Personal settings keep a default clarification framework at the top of the 模型与执行 group. Each clarification can switch for this round without writing that default back, and a default whose key was removed is labelled as no longer available instead of being used silently.
+- An item keeps the framework its clarification started with, so later rounds resume the same session; switching on purpose starts a new session and replays the questions already answered instead of failing to resume.
+- Nothing changes for deployments that select no framework: CodeBuddy stays the default, its model catalog stays validated as before, and AI notification summaries still use CodeBuddy.
+- The production image now bundles the Pi and DeepSeek Harness CLIs next to CodeBuddy and Codex, so a key configured in personal settings is enough to clarify with them; DeepSeek Harness needs the image's Node.js 24 runtime. Claude Code keeps its on-demand npm install.
+
+Existing installations may apply `migrations/029_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
+
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
 - With `AGENTFLOW_TRUST_IDENTITY_HEADERS=true`, identity headers such as `Staffname` are ignored on requests that carry `X-Forwarded-For`, `Forwarded` or `X-Real-IP`, unless the gateway also sends `X-AgentFlow-Gateway-Secret` matching the new `AGENTFLOW_IDENTITY_HEADER_SECRET`. A client behind a pass-through reverse proxy could otherwise sign in as any account. Deployments with the option off are unaffected.

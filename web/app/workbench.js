@@ -577,9 +577,120 @@ function credentialRowHTML(kind,user){
   const editor=on&&kind.key!=='gitSshKey'?credentialEditorHTML(kind,user):'';
   return `<div class="credential-row${on?' is-configured':''}${open?' is-open':''}" data-credential-row="${kind.key}">${credentialRowMainHTML(kind,user)}<div class="credential-editor"><div><div class="credential-editor-inner">${editor}</div></div></div></div>`;
 }
+// 需求澄清的默认框架：一个偏好，不是凭据，所以走同一张凭据表的 PUT 接口保存，
+// 但单独占一行放在「模型与执行」组顶部。可用性与 AI 对话共用同一份引擎目录（当前用户的），
+// 选了跑不起来的组合由服务端在保存时拒绝并说明原因。
+function clarifySharedModelAPI(){return (typeof window!=='undefined'&&window.AgentFlowAssistantModels)||null}
+function clarifySettingsEngineGroups(){
+  const api=clarifySharedModelAPI(),catalog=api?.catalog?.()||{models:[],engines:[]};
+  const engines=(catalog.engines&&catalog.engines.length)?catalog.engines:[{id:'codebuddy',name:'CodeBuddy',configured:true}];
+  return engines.map(engine=>({
+    id:engine.id,
+    name:engine.name||engine.id,
+    reason:engine.configured?'':`请先在个人配置中配置 ${engine.name||engine.id} API Key`,
+    disabled:!engine.configured,
+    models:(catalog.models||[]).filter(model=>(api?.engineOf?.(model.id)||'codebuddy')===engine.id)
+  }));
+}
+function clarifyPreferenceStaleNote(user){
+  const model=(user&&user.clarifyModel)||'';
+  if(!model)return '';
+  const api=clarifySharedModelAPI();
+  const engine=api?.engineOf?.(model)||'codebuddy';
+  if(engine==='codebuddy')return '';
+  const option=(api?.catalog?.().engines||[]).find(item=>item.id===engine);
+  return option?.configured?'':`<span class="clarify-pref-stale">已失效，当前用 CodeBuddy</span>`;
+}
+function clarifyPreferenceLabel(user,modelId){
+  const api=clarifySharedModelAPI();
+  if(!modelId)return 'CodeBuddy 默认';
+  const listed=(api?.catalog?.().models||[]).find(model=>model.id===modelId);
+  return listed?.name||modelId;
+}
+function clarifyPreferenceRowHTML(user){
+  const selected=(user&&user.clarifyModel)||'';
+  return `<div class="credential-row clarify-pref-row" data-clarify-pref><div class="credential-row-main"><div class="credential-row-who"><b>需求澄清 · 默认框架与模型<span>偏好</span></b><small>你是需求责任人（或项目 Owner）时，澄清默认用它；澄清时可以临时改，临时选择不写回这里。</small></div><div class="credential-row-end"><span class="clarify-pref-state">${escapeHTML(clarifyPreferenceLabel(user,selected))}</span>${clarifyPreferenceStaleNote(user)}<div class="clarify-model-field" id="clarifyPrefPicker" data-clarify-pref-picker><button type="button" class="ai-model-toggle" data-model-toggle aria-haspopup="listbox" aria-expanded="false"><span class="ai-model-icon" data-family="other">AI</span><span data-model-label>选择框架</span><span class="ai-model-caret" aria-hidden="true"></span></button><div class="ai-model-menu" hidden role="listbox"></div></div></div></div>`;
+}
+async function saveClarifyPreference(modelId){
+  const user=state.currentUser;
+  if(!user?.id||!modelId)return;
+  try{
+    const saved=await api(`/api/users/${user.id}/credentials`,{method:'PUT',body:JSON.stringify({clarifyModel:modelId})});
+    storeCredentialUser(saved);
+    notifyCredentialsChanged();
+    toast('已保存需求澄清的默认框架','ok');
+  }catch(err){
+    toast(err.message||'保存失败','err');
+  }
+  renderCredentialPanel();
+}
+function bindClarifyPreferencePicker(){
+  const host=$('#clarifyPrefPicker');
+  if(!host)return;
+  const api=clarifySharedModelAPI(),toggle=host.querySelector('[data-model-toggle]'),menu=host.querySelector('.ai-model-menu');
+  if(!api||!toggle||!menu)return;
+  const user=credentialUser(),selected=user.clarifyModel||'';
+  if(selected)api.paint(toggle,selected);
+  // 弹层由 placeClarifyPrefMenu 以 fixed 摆放：product-v4 的通用 .clarify-model-field
+  // 规则强制 absolute 向上弹，会被 .credential-fold>div 的 overflow:hidden 裁掉、
+  // 被上方的组头/工具栏遮住。fixed 逃逸裁切，方向按视口剩余空间翻转。
+  const dismiss=e=>{
+    if(e.type==='scroll'&&menu.contains(e.target))return;
+    if(e.type==='click'&&host.contains(e.target))return;
+    close();
+  };
+  const onKey=e=>{if(e.key==='Escape')close()};
+  const close=()=>{
+    if(menu.hidden)return;
+    menu.hidden=true;
+    toggle.setAttribute('aria-expanded','false');
+    document.removeEventListener('scroll',dismiss,true);
+    document.removeEventListener('resize',dismiss);
+    document.removeEventListener('click',dismiss,true);
+    document.removeEventListener('keydown',onKey);
+  };
+  toggle.onclick=e=>{
+    e.stopPropagation();
+    const open=menu.hidden;
+    close();
+    if(!open)return;
+    menu.hidden=false;
+    toggle.setAttribute('aria-expanded','true');
+    placeClarifyPrefMenu(toggle,menu);
+    document.addEventListener('scroll',dismiss,true);
+    document.addEventListener('resize',dismiss);
+    document.addEventListener('click',dismiss,true);
+    document.addEventListener('keydown',onKey);
+    void(async()=>{
+      await api.load?.().catch(()=>{});
+      api.renderGrouped(menu, clarifySettingsEngineGroups(), selected||api.DEFAULT, id=>{
+        close();
+        saveClarifyPreference(id);
+      });
+      placeClarifyPrefMenu(toggle,menu);
+    })();
+  };
+}
+// 与 placeScheduleModelMenu 同款：按渲染后的实际高度摆放，右缘对齐触发按钮。
+// product-v4 给 left/top/bottom 等写了 !important，所以这里用 inline !important 覆盖。
+function placeClarifyPrefMenu(toggle,menu){
+  const at=toggle.getBoundingClientRect();
+  const width=Math.min(Math.max(at.width,360),window.innerWidth-24,460);
+  menu.style.setProperty('width',width+'px','important');
+  menu.style.setProperty('left',Math.max(12,Math.min(at.right-width,window.innerWidth-width-12))+'px','important');
+  menu.style.setProperty('right','auto','important');
+  menu.style.setProperty('max-height','none','important');
+  const need=Math.min(menu.scrollHeight,320,window.innerHeight-24);
+  const below=window.innerHeight-at.bottom-12,above=at.top-12;
+  const down=below>=need||below>=above;
+  const room=Math.max(120,Math.min(need,down?below:above));
+  menu.style.setProperty('max-height',room+'px','important');
+  menu.style.setProperty('top',(down?at.bottom+6:Math.max(12,at.top-room-6))+'px','important');
+  menu.style.setProperty('bottom','auto','important');
+}
 function credentialGroupHTML(group,user){
   const kinds=CREDENTIAL_KINDS.filter(kind=>kind.group===group.id),done=kinds.filter(kind=>credentialConfigured(kind,user)).length,closed=!!credentialUI().closed[group.id];
-  return `<section class="credential-group" data-credential-group="${group.id}"><button type="button" class="credential-group-head credential-ink" aria-expanded="${!closed}">${credentialGlyph(group.icon,16)}<strong>${escapeHTML(group.name)}</strong><span class="credential-group-sub">${escapeHTML(group.sub)}</span><span class="credential-group-meta">${done} / ${kinds.length}</span><span class="credential-group-chevron">${credentialGlyph('chevron-down',15)}</span></button><div class="credential-fold${closed?' is-closed':''}"><div><div class="credential-rows">${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}<p class="credential-empty" hidden></p></div></div></div></section>`;
+  return `<section class="credential-group" data-credential-group="${group.id}"><button type="button" class="credential-group-head credential-ink" aria-expanded="${!closed}">${credentialGlyph(group.icon,16)}<strong>${escapeHTML(group.name)}</strong><span class="credential-group-sub">${escapeHTML(group.sub)}</span><span class="credential-group-meta">${done} / ${kinds.length}</span><span class="credential-group-chevron">${credentialGlyph('chevron-down',15)}</span></button><div class="credential-fold${closed?' is-closed':''}"><div><div class="credential-rows">${group.id==='model'?clarifyPreferenceRowHTML(user):''}${kinds.map(kind=>credentialRowHTML(kind,user)).join('')}<p class="credential-empty" hidden></p></div></div></div></section>`;
 }
 function credentialProgressHTML(user){
   const done=CREDENTIAL_KINDS.filter(kind=>credentialConfigured(kind,user)).length,next=credentialNextKind(user);
@@ -615,6 +726,7 @@ function renderCredentialPanel(){
   if(typeof hydrateGitHubConnections==='function')hydrateGitHubConnections(panel);
   applyCredentialFilter(panel,user);
   hydrateCredentialIcons(panel);
+  bindClarifyPreferencePicker();
 }
 function repaintCredentialRow(key){
   const row=$(`#credentialPanel [data-credential-row="${key}"]`),kind=credentialKind(key);if(!row||!kind)return;
@@ -691,6 +803,8 @@ function setCredentialButtonBusy(button,label){
 function storeCredentialUser(saved){
   const users=state.data.users||(state.data.users=[]),index=users.findIndex(u=>Number(u.id)===Number(saved.id));
   if(index>=0)users[index]=saved;else users.push(saved);
+  // 凭据一变，「哪个框架能跑」就不再是刚才那个答案了；清掉缓存，下次打开菜单重新问。
+  if(typeof resetClarifyEngineCatalogCache==='function')resetClarifyEngineCatalogCache();
 }
 function notifyCredentialsChanged(){$('#chatNextFrame')?.contentWindow?.postMessage({type:'agentflow-credentials-changed'},location.origin)}
 async function saveCredential(key,values={},options={}){
@@ -1180,7 +1294,14 @@ async function renderPersonalSettings(){
   bindCredentialPanel(panel);
   renderCredentialPanel();
   hydrateCredentialIcons(host);
-  setTimeout(()=>panel.classList.remove('is-entering'),900);
+  // A finished animation with fill:both keeps its final keyframe applied:
+  // identity transform + blur(0) would linger, and any applied transform or
+  // filter turns the section into the containing block of position:fixed
+  // descendants (the 选择框架 menu). Drop the classes once the entrance is over.
+  setTimeout(()=>{
+    panel.classList.remove('is-entering','credential-enter');
+    host.querySelector('.credential-account')?.classList.remove('credential-enter');
+  },900);
   // Offer the OAuth shortcut only when the server has a Gongfeng application.
   api('/api/auth/gongfeng',{silent:true}).then(capability=>{state.gongfengOAuthEnabled=!!capability?.enabled;document.querySelectorAll('[data-gongfeng-oauth]').forEach(el=>{el.hidden=!state.gongfengOAuthEnabled})}).catch(()=>{});
   if(storedUser.gitTokenConfigured){

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"agentflow/internal/domain"
 	"agentflow/internal/runtime"
@@ -25,29 +26,77 @@ func clarifySessionBase() string {
 	return filepath.Join(home, ".agentflow", "clarify-sessions")
 }
 
-func clarifyCLIHome(userID int64) string {
-	return filepath.Join(clarifySessionBase(), strconv.FormatInt(userID, 10), "home")
+// clarifySessionRoot 是每个责任人自己的那一层目录。各引擎的 builder 都以「Root 下的 home
+// 就是进程 HOME」为前提（AI 对话也这样），thread / native session 登记簿也写在 Root。
+func clarifySessionRoot(userID int64) string {
+	return filepath.Join(clarifySessionBase(), strconv.FormatInt(userID, 10))
 }
 
-// Older assessments have no owner metadata. Only resume those when the
-// conversation actually exists inside the current responsible user's HOME.
-func canResumeClarifySession(homeDir, sessionID string, sessionUserID, userID int64) bool {
+func clarifyCLIHome(userID int64) string {
+	return filepath.Join(clarifySessionRoot(userID), "home")
+}
+
+// 旧数据没有归属信息，只有在当前责任人的 HOME 里确实存在会话时才续跑。
+// 每个引擎自己保管自己的 conversation，所以探测也按引擎分派：CodeBuddy 在 HOME 的
+// .codebuddy 下留 transcript，Codex 在 Root 记 thread，agent CLI 在 Root 记 native session
+// ID。Claude Code 的 session UUID 由平台 ID 稳定推导，没有可探测的登记，会话缺失会以错误
+// 形式出现，由调用方改为重放历史。
+func canResumeClarifySession(root, engineID, sessionID string, sessionUserID, userID int64) bool {
 	if sessionUserID != 0 && sessionUserID != userID {
 		return false
 	}
 	if sessionID == "" || strings.ContainsAny(sessionID, `/\\*?[]`) || sessionID == "." || sessionID == ".." {
 		return false
 	}
-	files, err := filepath.Glob(filepath.Join(homeDir, ".codebuddy", "projects", "*", sessionID+".jsonl"))
-	if err != nil {
-		return false
-	}
-	for _, file := range files {
-		if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
-			return true
+	switch {
+	case engineID == assistantEngineClaude:
+		return true
+	case engineID == assistantEngineCodex:
+		return readCodexThread(root, sessionID) != ""
+	case runtime.IsAgentCLI(engineID):
+		return readAgentCLISession(root, engineID, sessionID) != ""
+	case engineID == "" || engineID == assistantEngineCodeBuddy:
+		files, err := filepath.Glob(filepath.Join(root, "home", ".codebuddy", "projects", "*", sessionID+".jsonl"))
+		if err != nil {
+			return false
+		}
+		for _, file := range files {
+			if info, err := os.Stat(file); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// clarifySessionReusable 判断这个会话能不能被这个引擎接着用：会话 ID 用调用方算出的有效值
+// （草稿那一轮还没有 Issue，靠前端带回来的 sessionId 续跑）；引擎换了就换会话，各家的
+// conversation 互不相通，接错会直接读不到上下文，宁可重放历史也不复用。
+func clarifySessionReusable(issue domain.Issue, engine clarifyEngine, sessionID, root string, userID int64) bool {
+	if stored := strings.TrimSpace(issue.Clarification.ModelID); stored != "" && clarifyEngineOf(stored).ID != engine.ID {
+		return false
+	}
+	return canResumeClarifySession(root, engine.ID, sessionID, issue.Clarification.SessionUserID, userID)
+}
+
+// clarifyDirLock 给每个共享目录一把锁，防止同一责任人的两轮澄清同时写引擎配置。
+var (
+	clarifyDirMu    sync.Mutex
+	clarifyDirLocks = map[string]*sync.Mutex{}
+)
+
+func clarifyDirLock(dir string) *sync.Mutex {
+	clarifyDirMu.Lock()
+	defer clarifyDirMu.Unlock()
+	if dir == "" {
+		dir = "<empty>"
+	}
+	lock, ok := clarifyDirLocks[dir]
+	if !ok {
+		lock = &sync.Mutex{}
+		clarifyDirLocks[dir] = lock
+	}
+	return lock
 }
 
 // CodeBuddy can report a missing resume conversation but still exit with 0.
@@ -64,7 +113,7 @@ func clarifySessionOutputError(output string) error {
 		}
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "sessionnotfounderror") || strings.Contains(lower, "no conversation found with session id") {
-			return fmt.Errorf("澄清会话不存在，无法续接")
+			return errClarifySessionMissing
 		}
 	}
 	return nil
@@ -204,6 +253,7 @@ func copyClarifyFile(src, dest string) error {
 
 type clarifyCommandOpts struct {
 	Bin, Model, Prompt, RunID, SessionID string
+	Engine                               string // 空串等价 "codebuddy"
 	Resume                               bool
 	Native                               bool
 	MCPConfig, Settings                  string
@@ -215,6 +265,10 @@ func prepareClarifyCommand(bin, model, prompt, runID, sessionID string, resume b
 }
 
 func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, error) {
+	engineKind := strings.TrimSpace(opts.Engine)
+	if engineKind == "" {
+		engineKind = "codebuddy"
+	}
 	args := []string{"-p", "--max-turns", "500", "--output-format", "stream-json", "--include-partial-messages"}
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		args = append(args, "--mcp-config", opts.MCPConfig, "--strict-mcp-config")
@@ -228,14 +282,14 @@ func prepareClarifyCommandWith(opts clarifyCommandOpts) (runtime.CommandSpec, er
 	} else if strings.TrimSpace(opts.SessionID) != "" {
 		args = append(args, "--session-id", opts.SessionID)
 	}
-	ex := domain.ExecutorDefinition{Kind: "codebuddy", Binary: opts.Bin, Model: opts.Model, Args: args}
+	ex := domain.ExecutorDefinition{Kind: engineKind, Binary: opts.Bin, Model: opts.Model, Args: args}
 	command, err := runtime.PrepareProviderCommand(ex, opts.Prompt, "local", inv)
 	if err != nil {
 		return runtime.CommandSpec{}, err
 	}
 	command.Argv = applyNativeToolSafety(command.Argv, AgentToolClarify)
 	if opts.SubmitOnly {
-		command.Argv = appendDisallowedTools(command.Argv, "Read,Grep,Glob")
+		command.Argv = appendDisallowedTools(command.Argv, clarifyReadOnlyTools)
 	}
 	if strings.TrimSpace(opts.MCPConfig) != "" {
 		command = command.WithMCPStartupWait(agentToolSessionMCPStartupWait)

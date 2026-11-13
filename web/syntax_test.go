@@ -41,10 +41,35 @@ func TestClarifyModelPickerAndMCPPrompt(t *testing.T) {
 		"agentflow.clarifyModel",
 		"selectedClarifyModel",
 		"data-clarify-model",
-		"model:selectedClarifyModel()",
+		"model:clarifyModel,",
 	} {
 		if !strings.Contains(string(app), want) {
 			t.Fatalf("clarify model picker is missing %q", want)
+		}
+	}
+}
+
+// The clarification picker must ask the availability endpoint and render the
+// grouped menu, otherwise it silently falls back to the flat CodeBuddy-centric list.
+func TestClarifyEnginePickerChrome(t *testing.T) {
+	app, err := readAppBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"renderGrouped",
+		"clarifyPickerGroups",
+		"/api/clarify-engines",
+		"clarifyResponsibleHint",
+		"clarifyEffectiveModel",
+		"clarifyModelForSend",
+		"clarifyScopeForIssue",
+		"paintIssueClarifyAvailability",
+		"saveClarifyPreference",
+		"clarifyPreferenceRowHTML",
+	} {
+		if !strings.Contains(string(app), want) {
+			t.Fatalf("clarify engine picker is missing %q", want)
 		}
 	}
 }
