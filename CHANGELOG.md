@@ -14,6 +14,7 @@ Repositories saved earlier with a token in `cloneUrl` keep cloning until they ar
 - An item keeps the framework its clarification started with, so later rounds resume the same session; switching on purpose starts a new session and replays the questions already answered instead of failing to resume.
 - Nothing changes for deployments that select no framework: CodeBuddy stays the default, its model catalog stays validated as before, and AI notification summaries still use CodeBuddy.
 - The production image now bundles the Pi and DeepSeek Harness CLIs next to CodeBuddy and Codex, so a key configured in personal settings is enough to clarify with them; DeepSeek Harness needs the image's Node.js 24 runtime. Claude Code keeps its on-demand npm install.
+- A source build no longer fails to load the build context when the checkout's `.data` contains root-owned sandbox directories. `.dockerignore` now names the `node_modules` trees that must stay out instead of using a `**/node_modules` exception, which made BuildKit walk excluded directories; `web/vscode-web/node_modules` is still packaged. Local-only `.superpowers/` and `workspaces/` state is excluded too, so it never enters the build context.
 
 Existing installations may apply `migrations/029_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
 
