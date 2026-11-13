@@ -154,7 +154,7 @@ agent CLI（opencode、cursor、agy、kimi、pi、dsh、zcode），包含原生 
 11. **API 与持久化**：`chatClarifyRequest.model` 的语义扩展为带引擎前缀的 ID；Issue 的
     `Clarification` 需要记录本轮澄清所用引擎（与已有 `SessionID`/`SessionUserID` 同层）；
     个人默认存 `user_configs` 侧表的 `clarify_model` 列（归 `UsersRepo`，gorm AutoMigrate 补列，并附
-    `migrations/028_clarify_model_preference.sql`）。另需一个「按需求或项目
+    `migrations/029_clarify_model_preference.sql`）。另需一个「按需求或项目
     解析责任人引擎可用性」的查询端点，返回每个引擎的可用状态与不可用原因供选择器置灰；它读的
     是责任人的凭据配置与控制面 CLI 安装状态，绝不返回 Key 本身。
 12. **文档**：`README.zh-CN.md:103`（「需求澄清和通知 AI 汇总目前使用 CodeBuddy」）、

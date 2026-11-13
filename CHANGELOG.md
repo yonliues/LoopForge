@@ -15,7 +15,7 @@ Repositories saved earlier with a token in `cloneUrl` keep cloning until they ar
 - Nothing changes for deployments that select no framework: CodeBuddy stays the default, its model catalog stays validated as before, and AI notification summaries still use CodeBuddy.
 - The production image now bundles the Pi and DeepSeek Harness CLIs next to CodeBuddy and Codex, so a key configured in personal settings is enough to clarify with them; DeepSeek Harness needs the image's Node.js 24 runtime. Claude Code keeps its on-demand npm install.
 
-Existing installations may apply `migrations/028_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
+Existing installations may apply `migrations/029_clarify_model_preference.sql`; the platform also adds these tables and columns on startup.
 
 ## 0.3.8 — header sign-in hardening and a GHCR mirror option
 
