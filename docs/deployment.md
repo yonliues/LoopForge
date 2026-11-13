@@ -4,16 +4,18 @@
 
 `bash scripts/dev.sh` explicitly configures local secrets, starts only this checkout's MySQL service, builds the platform, provisions the `admin` account, installs the missing observability generated columns through an explicit script, applies `migrations/seed/*.sql`, and starts the server on port 8090. Existing catalog definitions are preserved by `INSERT IGNORE`. Keep `.env`, `.local/` and database volumes outside version control.
 
-For a native installation, use Node.js 22+ on the API host and install the CLIs you choose. CodeBuddy is also used for requirement clarification; scheduled assistant tasks use whichever supported CLI the task selects:
+For a native installation, use Node.js 22+ on the API host and install the CLIs you choose. Requirement clarification picks one of these frameworks, and scheduled assistant tasks use whichever supported CLI the task selects:
 
 ```bash
 npm install --global @tencent-ai/codebuddy-code
 codebuddy --version
-# Optional executors for Main Bot and SOP roles:
+# Optional executors for Main Bot and SOP roles, and for requirement clarification:
 npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
+# Pi and DeepSeek Harness are also clarification frameworks; DeepSeek Harness needs Node.js 24.9+:
+npm install --global @earendil-works/pi-coding-agent@1.5.2 @deepseek-ai/dsh@0.2.2-rc.1
 ```
 
-Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable. Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy and Codex. Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code, Pi and DeepSeek Harness, into `$LOOPFORGE_DATA_DIR/cli`. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox that selects Claude Code still installs that pinned release on first use. Connected runners keep their own CLI requirements.
+Ensure the service can find `codebuddy` and Node.js on its PATH, or set `AGENTFLOW_CODEBUDDY_BIN` to the installed executable (every other engine honors `AGENTFLOW_<KIND>_BIN`, for example `AGENTFLOW_PI_BIN`). Configure the model key and its network environment in personal settings. The no-key script demo does not need the CLI. The production Docker image includes CodeBuddy, Codex, Pi and DeepSeek Harness. Claude Code and the other agent CLIs are not bundled. When a conversation fails because one is missing, the error says it is not installed and offers an install button. That downloads the pinned `@anthropic-ai/claude-code` release, or the public package for OpenCode, Kimi Code, Pi and DeepSeek Harness, into `$LOOPFORGE_DATA_DIR/cli`. Cursor CLI and Antigravity use their providers' installers and land in the service user's `~/.local/bin`. Closing or reloading the browser does not stop an install that has already started, and the button stays on “自动安装” until it finishes. A finished install replaces the earlier generation failure with a prompt to send the message again. The next message reuses the installation. An SOP sandbox that selects Claude Code still installs that pinned release on first use. Connected runners keep their own CLI requirements.
 
 Stop the foreground service with Ctrl-C. Start it again with the same command. MySQL data stays in its Compose volume. `docker compose stop mysql` stops the database without deleting it.
 
