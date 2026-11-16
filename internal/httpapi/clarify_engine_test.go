@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
 	"agentflow/internal/domain"
+	"agentflow/internal/repo"
 )
 
 // Task 1: 澄清的引擎解析。这些测试钉住的是「选了就不许改」这条契约：
@@ -121,5 +123,26 @@ func TestClarifyResolveModelRequiresBaseURL(t *testing.T) {
 	}
 	if engine.ID != "opencode" || engine.ModelID != "opencode:glm-4" {
 		t.Fatalf("engine = %+v", engine)
+	}
+}
+
+// Upstream issue #228 also restricted run evals to CodeBuddy. The fork never
+// changed run-eval behavior, so that independent upstream regression is kept.
+func TestRunEvalRefusesOtherCLIModel(t *testing.T) {
+	f := cvBNewHTTPFixture(t)
+	if _, err := f.s.UpdateUserCredentials(f.user.ID, repo.UserCredentialUpdate{CodeBuddyAPIKey: "eval-key"}); err != nil {
+		t.Fatal(err)
+	}
+	done := domain.Run{ID: "eval-codex-run", Status: "succeeded", WorkflowID: "missing",
+		ExecutionContext: domain.TelemetryContext{ProjectID: "platform"}, Nodes: map[string]*domain.NodeRun{}}
+	if err := f.s.PutRun(done); err != nil {
+		t.Fatal(err)
+	}
+	rec := cvBRequest(t, f, http.MethodPost, "/api/runs/eval-codex-run/eval", map[string]any{"model": "codex:gpt-5.5"}, true)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "只支持 CodeBuddy") {
+		t.Fatalf("status = %d body = %s, want 400 explaining the CodeBuddy limit", rec.Code, rec.Body.String())
+	}
+	if _, busy := f.s.ActiveRunEval(done.ID); busy {
+		t.Fatal("a Codex model must not start a run eval")
 	}
 }
