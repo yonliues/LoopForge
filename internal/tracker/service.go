@@ -318,6 +318,21 @@ func (s *Service) PullAll(store IssueStoreAdapter) error {
 			}
 			continue
 		}
+		if repo.Provider == "gitlab" {
+			started := time.Now().UTC()
+			n, err := s.pullGitLabIssues(store, repo)
+			status, message := "success", fmt.Sprintf("GitLab: imported %d work items", n)
+			if err != nil {
+				status = "failed"
+				message = err.Error()
+			}
+			s.addLog(domain.SyncLog{ID: fmt.Sprintf("sync-%d", started.UnixNano()), Direction: "pull", Source: "gitlab", Action: "sync_issues", Status: status, Message: message, ProjectID: repo.ProjectID, StartedAt: started, FinishedAt: time.Now().UTC()})
+			syncCount += n
+			if err != nil {
+				lastErr = err
+			}
+			continue
+		}
 		if repo.Provider != "gongfeng" || repo.GongfengProjectID == "" {
 			continue
 		}
@@ -374,6 +389,19 @@ func (s *Service) PullScheduleJob(store IssueStoreAdapter, job domain.ScheduleJo
 		for _, repo := range store.Repositories() {
 			if repo.Provider == "github" && (job.ProjectID == "" || repo.ProjectID == job.ProjectID) {
 				n, err := s.pullGitHubIssues(store, repo)
+				count += n
+				if err != nil {
+					last = err
+				}
+			}
+		}
+		return count, nil, last
+	case "gitlab":
+		count := 0
+		var last error
+		for _, repo := range store.Repositories() {
+			if repo.Provider == "gitlab" && (job.ProjectID == "" || repo.ProjectID == job.ProjectID) {
+				n, err := s.pullGitLabIssues(store, repo)
 				count += n
 				if err != nil {
 					last = err

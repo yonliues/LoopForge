@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,7 +98,11 @@ func (g *gitlabClient) request(ctx context.Context, method, suffix string, input
 		return fmt.Errorf("GitLab request failed")
 	}
 	defer res.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
+	limit := int64(8 << 20)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		limit = 4 << 10
+	}
+	payload, _ := io.ReadAll(io.LimitReader(res.Body, limit))
 	text := strings.ReplaceAll(string(payload), g.token, "")
 	if res.StatusCode >= 300 && res.StatusCode < 400 {
 		return fmt.Errorf("GitLab returned HTTP %d", res.StatusCode)
@@ -112,4 +117,61 @@ func (g *gitlabClient) request(ctx context.Context, method, suffix string, input
 		return fmt.Errorf("GitLab response: %s", strings.TrimSpace(text))
 	}
 	return nil
+}
+
+func (s *Service) pullGitLabIssues(store IssueStoreAdapter, repo domain.Repository) (int, error) {
+	g, err := s.gitlabClient(repo.GongfengProjectID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for page := 1; page <= 100; page++ {
+		var list []struct {
+			ID          int64     `json:"id"`
+			IID         int       `json:"iid"`
+			Title       string    `json:"title"`
+			Description string    `json:"description"`
+			State       string    `json:"state"`
+			URL         string    `json:"web_url"`
+			CreatedAt   time.Time `json:"created_at"`
+		}
+		suffix := "/issues?state=all&per_page=100&page=" + strconv.Itoa(page)
+		if err := g.request(context.Background(), http.MethodGet, suffix, nil, &list); err != nil {
+			return count, err
+		}
+		for _, item := range list {
+			id := fmt.Sprintf("gl-%s-%d", repo.ID, item.IID)
+			issue := domain.Issue{
+				ID: id, Number: item.IID, ProjectID: repo.ProjectID, RepositoryID: repo.ID,
+				BaseBranch: repo.DefaultBranch, Kind: "issue", Title: item.Title, Description: item.Description,
+				Priority: "medium", Source: "gitlab", Status: gongfengStateToStatus(item.State),
+				CreatedAt: item.CreatedAt, UpdatedAt: time.Now().UTC(),
+				ExternalRef: &domain.ExternalRef{
+					Source: "gitlab", ExternalID: strconv.FormatInt(item.ID, 10), ExternalIID: item.IID,
+					ExternalURL: item.URL, ExternalState: item.State, ExternalType: "issue", SyncedAt: time.Now().UTC(),
+				},
+			}
+			issue.ExternalRef.SourceContentHash = githubBodyHash(item.Description)
+			if item.State == "opened" {
+				issue.Status = "todo"
+			}
+			if item.State == "closed" {
+				issue.CloseSource = "external"
+			}
+			if old, ok := store.Issue(id); ok {
+				applyExistingIssue(&issue, old)
+				if old.Clarification.Status != "" || (old.ExternalRef != nil && githubBodyHash(old.Description) != old.ExternalRef.SourceContentHash) {
+					issue.Description = old.Description
+				}
+			}
+			if err := store.PutIssue(issue); err != nil {
+				return count, err
+			}
+			count++
+		}
+		if len(list) < 100 {
+			return count, nil
+		}
+	}
+	return count, fmt.Errorf("GitLab import exceeded 100 pages")
 }
