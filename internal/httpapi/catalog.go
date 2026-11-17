@@ -126,6 +126,9 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		}
 	}
 	githubShorthand := primary != "" && strings.HasPrefix(strings.TrimPrefix(primary, "git clone "), "github:")
+	if h.saveMatchingGitLabRepository(c, v, primary) {
+		return
+	}
 	if v.Provider == domain.RepositoryProviderSSH || (gitwork.IsSSHReference(sshReference) && !legacySSH && !githubShorthand) {
 		remote, err := gitwork.ParseSSHRemote(sshReference)
 		if err != nil {
@@ -255,6 +258,49 @@ func (h *catalogHandlers) repositories(c *gin.Context) {
 		}
 	}
 	h.saveRepository(c, v)
+}
+
+// saveMatchingGitLabRepository stores a repository whose host matches the
+// project owner's saved GitLab site. It reports handled when it wrote a
+// response, including the missing-site rejection for other HTTP hosts.
+func (h *catalogHandlers) saveMatchingGitLabRepository(c *gin.Context, v domain.Repository, primary string) bool {
+	if strings.TrimSpace(primary) == "" || h.repo == nil {
+		return false
+	}
+	project, ok := h.repo.Project(v.ProjectID)
+	if !ok {
+		return false
+	}
+	var site string
+	if owner, ok := h.repo.User(project.OwnerID); ok {
+		site = strings.TrimSpace(owner.GitLabBaseURL)
+	}
+	if info, ok := domain.ParseGitLabRepositoryURL(primary, site); ok {
+		v.Provider = "gitlab"
+		v.GongfengProjectID = info.Project
+		v.WebURL = info.WebURL
+		v.CloneURL = info.CloneURL
+		if v.Name == "" {
+			v.Name = info.Name
+		}
+		if v.DefaultBranch == "" {
+			v.DefaultBranch = "main"
+		}
+		h.saveRepository(c, v)
+		return true
+	}
+	if site == "" && gitlabHTTPReference(primary) {
+		if _, known := domain.ParseRepositoryURL(primary); !known {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请项目所有者先在个人设置填写 GitLab 地址和令牌"})
+			return true
+		}
+	}
+	return false
+}
+
+func gitlabHTTPReference(raw string) bool {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	return strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "http://")
 }
 
 func (h *catalogHandlers) saveRepository(c *gin.Context, v domain.Repository) {
