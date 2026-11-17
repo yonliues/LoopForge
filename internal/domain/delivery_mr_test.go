@@ -140,3 +140,15 @@ func TestResolveRunDeliveryMRsLegacyMultiRepository(t *testing.T) {
 		t.Fatalf("legacy runs must retain the best MR for each repository: %+v", got)
 	}
 }
+
+func TestGongfengMRURLGitLabIdentity(t *testing.T) {
+	if got := GongfengMRURL("gitlab:git.example.com/platform/api", 12); got != "https://git.example.com/platform/api/-/merge_requests/12" {
+		t.Fatalf("url %s", got)
+	}
+	if got := GongfengMRURL("gitlab:git.example.com:8443/platform/api", 3); got != "https://git.example.com:8443/platform/api/-/merge_requests/3" {
+		t.Fatalf("port url %s", got)
+	}
+	if GongfengMRURL("github:octo/hello", 4) != "https://github.com/octo/hello/pull/4" {
+		t.Fatal("github url changed")
+	}
+}
