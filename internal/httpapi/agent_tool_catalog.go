@@ -417,6 +417,9 @@ func (h *agentToolGateway) buildCatalog(ctx context.Context, session *AgentToolS
 	}
 	out = append(out, mainBotBrowserTools(session)...)
 	out = append(out, mainBotGitHubTools(session)...)
+	if h.projectHasGitLabRepository(session.ProjectID) {
+		out = append(out, mainBotGitLabTools(session)...)
+	}
 	out = append(out, terminalToolDescriptors(session.Mode, session.ExecMode)...)
 	session.mu.Lock()
 	session.catalog = append([]agentToolDescriptor{}, out...)

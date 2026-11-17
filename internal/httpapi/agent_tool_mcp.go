@@ -364,6 +364,9 @@ func (h *agentToolGateway) dispatch(ctx context.Context, session *AgentToolSessi
 	if tool.Kind == "github" {
 		return h.callMainBotGitHub(ctx, session, tool.Name, args)
 	}
+	if tool.Kind == "gitlab" {
+		return h.callMainBotGitLab(ctx, session, tool.Name, args)
+	}
 	if tool.Kind == "agentflow" {
 		if session.Mode == AgentToolClarify && !agentToolNameAllowed(AgentToolClarify, "agentflow", tool.UpstreamName) {
 			return "", errAgentToolForbidden
