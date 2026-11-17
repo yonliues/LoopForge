@@ -54,6 +54,7 @@ function codeBuddyEnvironmentIntent(value){
 // A stored value the CLI does not take as written; it connects to 国际站 until it is saved again.
 function codeBuddyEnvironmentLegacy(value){const raw=String(value||'').trim();return !!raw&&!codeBuddyEnvironment(raw)}
 function codeBuddyKeyURL(value){return (codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).keyUrl}
+function gitLabTokenApplyURL(site){const raw=String(site||'').trim().replace(/\/+$/,'');return /^https?:\/\/[^/?#]+$/i.test(raw)?raw+'/-/user_settings/personal_access_tokens':''}
 function codeBuddyKeyLinkLabel(value){return `前往${(codeBuddyEnvironmentIntent(value)||CODEBUDDY_ENVIRONMENTS[0]).label}获取 API Key`}
 const CREDENTIAL_KINDS=[
   {key:'gitToken',group:'platform',name:'GitHub',short:'仓库授权',logo:'github',monochrome:true,
@@ -62,6 +63,14 @@ const CREDENTIAL_KINDS=[
     guide:[['打开 GitHub「Settings → Developer settings → Personal access tokens」','https://github.com/settings/tokens','前往 GitHub 申请个人访问令牌'],['新建令牌，为目标仓库授予 <code>Contents</code> 和 <code>Pull requests</code> 的读写权限'],['复制令牌粘贴到下方，保存前会自动校验权限']],
     placeholder:'请输入个人访问令牌（PAT）',hint:'保存前会先校验令牌有效性与权限',
     impact:'依赖私有仓库的 SOP 将无法克隆或推送仓库。'},
+  {key:'gitLab',group:'platform',name:'GitLab',short:'GitLab 令牌',icon:'key',
+    secretField:'gitLabToken',clearField:'gitLabClear',configured:'gitLabTokenConfigured',
+    use:'克隆自建 GitLab、同步 Issue、提交 Merge Request',
+    description:'用于访问你保存的自建 GitLab 站点：克隆、推送、同步 Issue 和 Merge Request。',
+    guide:[['在 GitLab 创建个人访问令牌，并勾选 api 权限',gitLabTokenApplyURL,'前往 GitLab 申请个人访问令牌'],['填写站点根地址和令牌。保存时会先向该站点校验']],
+    placeholder:'请输入个人访问令牌',hint:'需要 api 权限。保存时会校验站点地址和令牌',
+    extra:{name:'gitLabBaseUrl',label:'GitLab 地址',placeholder:'https://git.example.com',url:true,note:'站点根地址，不要带路径'},
+    impact:'自建 GitLab 仓库将无法克隆、同步或提交 Merge Request。'},
   {key:'gitSshKey',group:'platform',name:'Git SSH',short:'Git SSH 密钥',icon:'key',
     use:'按 SSH 主机管理个人密钥，仓库自动匹配'},
   {key:'codeBuddyApiKey',group:'model',name:'CodeBuddy',short:'CodeBuddy API Key',logo:'codebuddy',
@@ -379,7 +388,7 @@ function credentialCatalogAction(action,row,catalog,button){
 const CREDENTIAL_RECOMMENDED=['gitToken','codeBuddyApiKey'];
 const CREDENTIAL_PAT_WARNING='请填写 GitHub <b>个人访问令牌（PAT）</b>，为目标仓库授予 <b>Contents</b> 和 <b>Pull requests</b> 的读写权限；少勾权限会导致克隆 / 推送仓库失败。';
 function credentialKind(key){return CREDENTIAL_KINDS.find(kind=>kind.key===key)||null}
-function credentialConfigured(kind,user){return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
+function credentialConfigured(kind,user){if(kind?.configured)return !!user?.[kind.configured];return !!credentialValue(user,kind.agentCli?kind.key+'.apiKeyConfigured':kind.key+'Configured')}
 function credentialUser(){return userById(state.currentUser?.id)||{}}
 function credentialUI(){return state.credentialUI||(state.credentialUI={open:null,filter:'all',closed:{}})}
 function credentialGlyph(name,size=16,cls=''){return `<svg class="agent-icon harness-icon${cls?' '+cls:''}" data-icon="${name}" width="${size}" height="${size}" aria-hidden="true" focusable="false"></svg>`}
@@ -439,7 +448,7 @@ function credentialSavePayload(kind,values={}){
     if(kind.models&&values.models!==undefined)entry.models=credentialCatalogStored(values.models);
     return {agentCliCredentials:{[kind.agentCli]:entry}};
   }
-  const payload={[kind.key]:String(values.secret||'').trim()};
+  const payload={[kind.secretField||kind.key]:String(values.secret||'').trim()};
   if(kind.extra&&values.extra!==undefined)payload[kind.extra.name]=String(values.extra||'').trim()||(kind.extra.fallback||'');
   if(kind.models&&values.models!==undefined)payload[kind.models.name]=credentialCatalogStored(values.models);
   return payload;
@@ -450,7 +459,7 @@ function credentialClearPayload(kind){
     if(kind.models)entry.models=[];
     return {agentCliCredentials:{[kind.agentCli]:entry}};
   }
-  const payload={[kind.key+'Clear']:true};
+  const payload={[kind.clearField||kind.key+'Clear']:true};
   if(kind.extra?.clearWithKey)payload[kind.extra.name]='';
   if(kind.models)payload[kind.models.name]=[];
   return payload;
@@ -2156,6 +2165,6 @@ function renderDashboard(){
   const cfg=state.data.syncConfig||{},logs=state.data.syncLogs||[];
   const synced=knownTime(cfg.lastSyncAt),syncResult=logs[0]?.status==='success'?'成功':logs[0]?.status==='failed'?'失败':'';
   $('#dashFeedHint').textContent=synced?`最近同步 ${synced.toLocaleString()}${syncResult?` · ${syncResult}`:''}`:'从未同步';
-  const feed=logs.slice(0,8).map(l=>`<div class="tl-item"><div><b>${l.direction==='pull'?'拉取':'推送'} · ${l.source==='github'?'GitHub':l.source==='gongfeng'?'工蜂':l.source==='tapd'?'TAPD':escapeHTML(l.source||'')}</b> <span class="muted">${escapeHTML(l.message||l.action)}</span></div><div class="muted" style="font-size:10.5px;margin-top:2px">${new Date(l.startedAt).toLocaleString()} · ${l.status==='success'?'成功':`失败 ${escapeHTML(l.message||'')}`}</div></div>`).join('');
+  const feed=logs.slice(0,8).map(l=>`<div class="tl-item"><div><b>${l.direction==='pull'?'拉取':'推送'} · ${l.source==='github'?'GitHub':l.source==='gitlab'?'GitLab':l.source==='gongfeng'?'工蜂':l.source==='tapd'?'TAPD':escapeHTML(l.source||'')}</b> <span class="muted">${escapeHTML(l.message||l.action)}</span></div><div class="muted" style="font-size:10.5px;margin-top:2px">${new Date(l.startedAt).toLocaleString()} · ${l.status==='success'?'成功':`失败 ${escapeHTML(l.message||'')}`}</div></div>`).join('');
   $('#dashFeed').innerHTML=feed||'<div class="tl-item"><div class="muted">尚未同步。绑定 GitHub 仓库后，可在「需求列表」里点击「同步 GitHub」。</div></div>';
 }

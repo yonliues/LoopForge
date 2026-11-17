@@ -255,7 +255,7 @@ function renderIssueDetailTab(){
 }
 function drawerFact(label,value,title){return `<div class="detail-fact"><span>${label}</span><b title="${escapeHTML(title||value||'')}">${value===''||value==null?'—':value}</b></div>`}
 function clarificationOverviewCard(issue){
-  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='tapd'?'TAPD':'LoopForge';
+  const c=issue.clarification||{},source=issue.source==='gongfeng'?'工蜂':issue.source==='gitlab'?'GitLab':issue.source==='github'?'GitHub':issue.source==='tapd'?'TAPD':'LoopForge';
   if(issueClarifying(issue.id)||c.status==='analyzing'){
     return `<div class="clarify-overview"><span>…</span><div><b>澄清正在后台分析</b><small>关闭网页也不会中断，点查看可回到分析过程</small></div><button class="button ghost small" data-start-clarify>查看</button></div>`;
   }
@@ -717,7 +717,8 @@ function conversationWorkBranchNames(issue,data){
 // 分支名保留斜杠（与 GitHub、工蜂自己的链接一致），其他字符照常编码。
 function gongfengRefPath(ref){return encodeURIComponent(String(ref||'')).replace(/%2F/gi,'/')}
 function conversationRepoIsGitHub(webUrl){try{return new URL(String(webUrl||'')).hostname.toLowerCase()==='github.com'}catch{return false}}
-function conversationRepoPlatform(webUrl){return conversationRepoIsGitHub(webUrl)?'GitHub':'工蜂'}
+function conversationProjectPath(project){const raw=String(project||'').trim();const gitlab=raw.match(/^gitlab:[^/]+\/(.+)$/i);if(gitlab)return gitlab[1];return raw.replace(/^github:/i,'')}
+function conversationRepoPlatform(webUrl,project){const id=String(project||'');if(/^gitlab:/i.test(id))return 'GitLab';if(conversationRepoIsGitHub(webUrl)||/^github:/i.test(id))return 'GitHub';return '工蜂'}
 // 仓库网页地址 + 分支 → 分支页；有基线分支时链到对比页，直接看这次改了什么。
 function gongfengBranchLinks(webUrl,work,base){
   const root=String(webUrl||'').trim().replace(/\.git$/,'').replace(/\/+$/,'');
@@ -734,12 +735,13 @@ function conversationRepoCards(issue,data){
   const lower=s=>String(s||'').toLowerCase();
   const cards=branches.map(b=>({name:b.repository||'仓库',path:pathOf(b.webUrl),webUrl:b.webUrl,work:b.workBranch,base:b.baseBranch,mrs:[]}));
   mrs.forEach(mr=>{
-    const project=String(mr.project||''),repo=lower(mr.repository||project.split('/').pop());
-    let card=cards.find(c=>(project&&lower(c.path)===lower(project))||lower(c.name)===repo);
+    const project=String(mr.project||''),projectPath=conversationProjectPath(project),repo=lower(mr.repository||projectPath.split('/').pop());
+    let card=cards.find(c=>(projectPath&&lower(c.path)===lower(projectPath))||lower(c.name)===repo);
     if(!card){card={name:mr.repository||project.split('/').pop()||'仓库',path:project,webUrl:'',work:'',base:'',mrs:[]};cards.push(card)}
     const mrRoot=String(mr.url||'').match(/^(https?:\/\/.+?)\/(?:(?:-\/)?merge_requests|pull)\//)?.[1];
     if(!card.webUrl&&mrRoot)card.webUrl=mrRoot;
-    if(!card.path)card.path=project;
+    if(!card.path)card.path=projectPath;
+    if(/^gitlab:/i.test(project)||/^github:/i.test(project))card.projectId=project;
     card.mrs.push(mr);
   });
   if(!cards.length)return '<div class="detail-empty compact">工作区记录已清理，没有仓库和分支信息</div>';
@@ -749,7 +751,7 @@ function conversationRepoCards(issue,data){
     const mr=c.mrs[c.mrs.length-1],state=String(mr?.state||'').toLowerCase();
     const target=mr?.targetBranch||c.base||'';
     const links=gongfengBranchLinks(c.webUrl,c.work,target);
-    const platform=conversationRepoPlatform(c.webUrl),mrWord=platform==='GitHub'?'PR':'MR';
+    const platform=conversationRepoPlatform(c.webUrl,c.projectId||mr?.project),mrWord=platform==='GitHub'?'PR':'MR';
     const root=safeURL(String(c.webUrl||'').trim().replace(/\.git$/,'').replace(/\/+$/,''));
     const ns=c.path&&lower(c.path).endsWith(`/${lower(c.name)}`)?c.path.slice(0,-c.name.length):'';
     const nameHTML=`${ns?`<span>${escapeHTML(ns)}</span>`:''}<b>${escapeHTML(c.name)}</b>`;
