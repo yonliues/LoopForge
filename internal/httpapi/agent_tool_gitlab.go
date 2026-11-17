@@ -17,11 +17,18 @@ import (
 )
 
 const (
-	mainBotGitLabIssuesList = "workbench_gitlab_issues_list"
-	mainBotGitLabIssueGet   = "workbench_gitlab_issue_get"
-	mainBotGitLabMRsList    = "workbench_gitlab_mrs_list"
-	mainBotGitLabMRStatus   = "workbench_gitlab_mr_status"
-	mainBotGitLabMRFiles    = "workbench_gitlab_mr_files"
+	mainBotGitLabIssuesList  = "workbench_gitlab_issues_list"
+	mainBotGitLabIssueGet    = "workbench_gitlab_issue_get"
+	mainBotGitLabMRsList     = "workbench_gitlab_mrs_list"
+	mainBotGitLabMRStatus    = "workbench_gitlab_mr_status"
+	mainBotGitLabMRFiles     = "workbench_gitlab_mr_files"
+	mainBotGitLabCommentAdd  = "workbench_gitlab_comment_add"
+	mainBotGitLabLabelsAdd   = "workbench_gitlab_labels_add"
+	mainBotGitLabMRReview    = "workbench_gitlab_mr_review"
+	mainBotGitLabMRMerge     = "workbench_gitlab_mr_merge"
+	mainBotGitLabIssueClose  = "workbench_gitlab_issue_close"
+	mainBotGitLabIssueCreate = "workbench_gitlab_issue_create"
+	mainBotGitLabMRClose     = "workbench_gitlab_mr_close"
 )
 
 func mainBotGitLabTools(s *AgentToolSession) []agentToolDescriptor {
@@ -36,6 +43,13 @@ func mainBotGitLabTools(s *AgentToolSession) []agentToolDescriptor {
 		{Name: mainBotGitLabMRsList, Kind: "gitlab", Description: "列出项目绑定的 GitLab 仓库里的 Merge Request。hasMore=true 表示还有未列出的条目。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"state":{"type":"string","enum":["opened","closed","all"],"description":"默认 opened"},"limit":{"type":"integer","minimum":1,"maximum":50,"description":"默认 20"}},"required":["repository"],"additionalProperties":false}`)},
 		{Name: mainBotGitLabMRStatus, Kind: "gitlab", Description: "查看一个 Merge Request 的标题、状态、分支、head sha、合并状态、作者和流水线。流水线读取失败时 checksState 为 unknown，原因在 checksWarnings。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `},"required":["repository","number"],"additionalProperties":false}`)},
 		{Name: mainBotGitLabMRFiles, Kind: "gitlab", Description: "列出一个 Merge Request 的 diff。单个 patch 和总长度都会截断。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"limit":{"type":"integer","minimum":1,"maximum":100,"description":"默认 50"}},"required":["repository","number"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabCommentAdd, Kind: "gitlab", Description: "给 Issue 或 Merge Request 加评论。target 必须是 issue 或 merge_request。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"target":{"type":"string","enum":["issue","merge_request"]},` + numberProp + `,"body":{"type":"string","minLength":1,"maxLength":10000}},"required":["repository","target","number","body"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabLabelsAdd, Kind: "gitlab", Description: "给 Issue 或 Merge Request 添加已存在的标签。不存在的标签会在写入前拒绝。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"target":{"type":"string","enum":["issue","merge_request"]},` + numberProp + `,"labels":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":20}},"required":["repository","target","number","labels"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabMRReview, Kind: "gitlab", Description: "审查 Merge Request：APPROVE 批准，COMMENT 只留言，REQUEST_CHANGES 留言并在本人已批准时撤销批准。需要「完全权限」或「帮我批准」。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"event":{"type":"string","enum":["APPROVE","REQUEST_CHANGES","COMMENT"]},"body":{"type":"string","maxLength":10000}},"required":["repository","number","event"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabMRMerge, Kind: "gitlab", Description: "合并 Merge Request。method 只能是 merge 或 squash。需要「完全权限」或「帮我批准」。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"method":{"type":"string","enum":["merge","squash"]},"sha":{"type":"string"},"commitMessage":{"type":"string","maxLength":10000}},"required":["repository","number"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabIssueClose, Kind: "gitlab", Description: "关闭 Issue。不发送关闭原因。已关闭的返回 alreadyClosed。需要「完全权限」或「帮我批准」。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"comment":{"type":"string","maxLength":10000}},"required":["repository","number"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabIssueCreate, Kind: "gitlab", Description: "新建 Issue。labels 必须已经存在。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,"title":{"type":"string","minLength":1,"maxLength":256},"body":{"type":"string","maxLength":20000},"labels":{"type":"array","items":{"type":"string"},"maxItems":20}},"required":["repository","title"],"additionalProperties":false}`)},
+		{Name: mainBotGitLabMRClose, Kind: "gitlab", Description: "关闭未合并的 Merge Request。已合并的不能关闭。需要「完全权限」或「帮我批准」。", InputSchema: json.RawMessage(`{"type":"object","properties":{` + repoProp + `,` + numberProp + `,"comment":{"type":"string","maxLength":10000}},"required":["repository","number"],"additionalProperties":false}`)},
 	}
 }
 
@@ -77,6 +91,32 @@ func (h *agentToolGateway) callMainBotGitLab(ctx context.Context, session *Agent
 		result, err = client.mrStatus(ctx, args)
 	case mainBotGitLabMRFiles:
 		result, err = client.mrFiles(ctx, args)
+	case mainBotGitLabCommentAdd, mainBotGitLabLabelsAdd, mainBotGitLabIssueCreate:
+		if rerr := reviewGitHubWrite(ctx, session, name, repository, args, gitlabWriteActions[name]); rerr != nil {
+			return "", rerr
+		}
+		switch name {
+		case mainBotGitLabCommentAdd:
+			result, err = client.comment(ctx, args)
+		case mainBotGitLabLabelsAdd:
+			result, err = client.addLabels(ctx, args)
+		default:
+			result, err = client.createIssue(ctx, args)
+		}
+	case mainBotGitLabMRReview, mainBotGitLabMRMerge, mainBotGitLabIssueClose, mainBotGitLabMRClose:
+		if werr := gitlabWriteAllowed(session, name); werr != nil {
+			return "", werr
+		}
+		switch name {
+		case mainBotGitLabMRReview:
+			result, err = client.review(ctx, args)
+		case mainBotGitLabMRMerge:
+			result, err = client.merge(ctx, args)
+		case mainBotGitLabIssueClose:
+			result, err = client.closeIssue(ctx, args)
+		default:
+			result, err = client.closeMR(ctx, args)
+		}
 	default:
 		return "", errAgentToolUnknown
 	}
@@ -159,6 +199,10 @@ func gitlabToolSiteHost(site string) (string, bool) {
 }
 
 func (g *gitlabToolClient) request(ctx context.Context, method, suffix string, input, output any) error {
+	return g.requestURL(ctx, method, g.base+"/projects/"+g.path+suffix, input, output)
+}
+
+func (g *gitlabToolClient) requestURL(ctx context.Context, method, rawURL string, input, output any) error {
 	var body io.Reader
 	if input != nil {
 		raw, err := json.Marshal(input)
@@ -170,7 +214,7 @@ func (g *gitlabToolClient) request(ctx context.Context, method, suffix string, i
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, g.base+"/projects/"+g.path+suffix, body)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return err
 	}

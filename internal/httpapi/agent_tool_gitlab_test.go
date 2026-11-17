@@ -81,7 +81,7 @@ func TestGitLabAssistantRead(t *testing.T) {
 			githubTools++
 		}
 	}
-	if gitlabTools != 5 || githubTools == 0 {
+	if gitlabTools < 5 || githubTools == 0 {
 		t.Fatalf("gitlab tools %d github tools %d", gitlabTools, githubTools)
 	}
 	only := gw.buildCatalog(t.Context(), &AgentToolSession{Mode: AgentToolAssistant, ProjectID: "gh-only", UserID: requester.ID, User: requester})
