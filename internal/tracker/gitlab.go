@@ -175,3 +175,113 @@ func (s *Service) pullGitLabIssues(store IssueStoreAdapter, repo domain.Reposito
 	}
 	return count, fmt.Errorf("GitLab import exceeded 100 pages")
 }
+
+type gitlabMR struct {
+	IID          int        `json:"iid"`
+	State        string     `json:"state"`
+	SourceBranch string     `json:"source_branch"`
+	TargetBranch string     `json:"target_branch"`
+	WebURL       string     `json:"web_url"`
+	MergedAt     *time.Time `json:"merged_at"`
+}
+
+func (m gitlabMR) delivery(project string) domain.DeliveryMR {
+	state := "opened"
+	switch m.State {
+	case "merged":
+		state = "merged"
+	case "closed":
+		state = "closed"
+	}
+	link := strings.TrimSpace(m.WebURL)
+	if link == "" {
+		link = domain.GongfengMRURL(project, m.IID)
+	}
+	return domain.DeliveryMR{Project: project, IID: m.IID, URL: link, State: state, GongfengState: state, TargetBranch: m.TargetBranch}
+}
+
+func (g *gitlabClient) findMR(branch string) (gitlabMR, bool, error) {
+	q := url.Values{}
+	q.Set("source_branch", branch)
+	q.Set("state", "all")
+	q.Set("order_by", "updated_at")
+	q.Set("sort", "desc")
+	q.Set("per_page", "20")
+	var list []gitlabMR
+	if err := g.request(context.Background(), http.MethodGet, "/merge_requests?"+q.Encode(), nil, &list); err != nil {
+		return gitlabMR{}, false, err
+	}
+	for _, item := range list {
+		if item.SourceBranch == branch {
+			return item, true, nil
+		}
+	}
+	return gitlabMR{}, false, nil
+}
+
+func (s *Service) gitlabFindBranch(project, branch string) (domain.DeliveryMR, bool, error) {
+	g, err := s.gitlabClient(project)
+	if err != nil {
+		return domain.DeliveryMR{}, false, err
+	}
+	item, ok, err := g.findMR(branch)
+	if err != nil || !ok {
+		return domain.DeliveryMR{}, ok, err
+	}
+	return item.delivery(project), true, nil
+}
+
+func (s *Service) gitlabMergeBranch(project, branch, target, title, description string) (string, error) {
+	if branch == "" {
+		return "", fmt.Errorf("source branch is required")
+	}
+	if branch == target {
+		return "", nil
+	}
+	g, err := s.gitlabClient(project)
+	if err != nil {
+		return "", err
+	}
+	item, found, err := g.findMR(branch)
+	if err != nil {
+		return "", err
+	}
+	if found && item.State == "merged" {
+		return "!" + strconv.Itoa(item.IID), nil
+	}
+	if !found || item.State == "closed" {
+		if target == "" {
+			return "", ErrNoOpenMR
+		}
+		if strings.TrimSpace(title) == "" {
+			title = "LoopForge: " + branch + " → " + target
+		}
+		item = gitlabMR{}
+		body := map[string]any{"source_branch": branch, "target_branch": target, "title": title, "description": description}
+		if err := g.request(context.Background(), http.MethodPost, "/merge_requests", body, &item); err != nil {
+			return "", err
+		}
+	}
+	mergeBody := map[string]any{"should_remove_source_branch": false}
+	if err := g.request(context.Background(), http.MethodPut, "/merge_requests/"+strconv.Itoa(item.IID)+"/merge", mergeBody, nil); err != nil {
+		return "", err
+	}
+	return "!" + strconv.Itoa(item.IID), nil
+}
+
+func (s *Service) refreshGitLabDelivery(store MRDeliveryStore, project string, iid int) error {
+	g, err := s.gitlabClient(project)
+	if err != nil {
+		return err
+	}
+	var item gitlabMR
+	if err := g.request(context.Background(), http.MethodGet, "/merge_requests/"+strconv.Itoa(iid), nil, &item); err != nil {
+		return err
+	}
+	d := item.delivery(project)
+	var mergedAt time.Time
+	if d.State == "merged" && item.MergedAt != nil {
+		mergedAt = item.MergedAt.UTC()
+	}
+	return store.UpdateMRDeliveryState(project, iid, d.State, d.TargetBranch, mergedAt, time.Now().UTC())
+}
