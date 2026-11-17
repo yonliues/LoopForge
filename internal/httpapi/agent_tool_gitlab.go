@@ -55,7 +55,7 @@ func mainBotGitLabTools(s *AgentToolSession) []agentToolDescriptor {
 
 func (h *agentToolGateway) projectHasGitLabRepository(projectID string) bool {
 	projectID = strings.TrimSpace(projectID)
-	if h == nil || h.repo == nil || projectID == "" {
+	if h == nil || h.deps == nil || h.repo == nil || projectID == "" {
 		return false
 	}
 	for _, repo := range h.repo.Repositories() {
