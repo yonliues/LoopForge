@@ -161,7 +161,7 @@ func (e *Engine) MaterializeConversationWorkspace(ctx context.Context, id string
 	ctx = gitwork.WithSSHKeys(ctx, credentials.GitSSHKeys)
 	return env.prepareRepositoriesOnce(func() error {
 		if err := prepareRepositories(ctx, env.Workspace(), run.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitToken) != "")
+			return explainRepositoryAuthFailure(fmt.Errorf("repository checkout: %w", err), run.RepositoryContexts(), strings.TrimSpace(gitToken) != "", strings.TrimSpace(credentials.GitLabToken) != "")
 		}
 		return nil
 	})
@@ -190,7 +190,8 @@ func (e *Engine) materializeRunnerConversationWorkspace(ctx context.Context, run
 			return nil
 		}
 		if !runnerWorkspaceBusy(response) || time.Now().After(deadline) {
-			return explainGitAuthFailure(fmt.Errorf("%s", response.Error), strings.TrimSpace(e.resolveRunCredentials(run).GitToken) != "")
+			creds := e.resolveRunCredentials(run)
+			return explainRepositoryAuthFailure(fmt.Errorf("%s", response.Error), run.RepositoryContexts(), strings.TrimSpace(creds.GitToken) != "", strings.TrimSpace(creds.GitLabToken) != "")
 		}
 		select {
 		case <-ctx.Done():

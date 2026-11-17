@@ -111,6 +111,17 @@ func resolveGitToken(s *repo.Store, userID int64) string {
 	return ""
 }
 
+func resolveGitLabToken(s *repo.Store, userID int64) string {
+	if s == nil || userID <= 0 {
+		return ""
+	}
+	user, ok := s.User(userID)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(user.GitLabToken)
+}
+
 var (
 	gitCommandFailure = regexp.MustCompile(`(?i)repository checkout|git (clone|fetch|pull|push|ls-remote)`)
 	gitAuthFailure    = regexp.MustCompile(`(?i)could not read Username|Authentication failed|HTTP Basic: Access denied|requested URL returned error: 40[13]|Invalid username or password`)
@@ -133,6 +144,52 @@ func explainGitAuthFailure(err error, tokenConfigured bool) error {
 		return fmt.Errorf("运行责任人未配置 Git Token，无法拉取仓库。%s。原始错误：%w", gitTokenFixHint, err)
 	}
 	return fmt.Errorf("运行责任人的 Git Token 无效、已过期或权限不足，无法拉取仓库。%s；并确认责任人对该仓库有权限。原始错误：%w", gitTokenFixHint, err)
+}
+
+const gitLabTokenFixHint = "请责任人到「个人配置 → GitLab」配置个人访问令牌，勾选 api 权限"
+
+// explainGitLabAuthFailure is the GitLab counterpart of explainGitAuthFailure.
+// It is used only when the failing repository provider is gitlab.
+func explainGitLabAuthFailure(err error, tokenConfigured bool) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "GitLab") || !gitCommandFailure.MatchString(msg) || !gitAuthFailure.MatchString(msg) {
+		return err
+	}
+	if !tokenConfigured {
+		return fmt.Errorf("运行责任人未配置 GitLab 令牌，无法拉取仓库。%s。原始错误：%w", gitLabTokenFixHint, err)
+	}
+	return fmt.Errorf("运行责任人的 GitLab 令牌无效、已过期或权限不足，无法拉取仓库。%s。原始错误：%w", gitLabTokenFixHint, err)
+}
+
+func explainRepositoryAuthFailure(err error, repositories []domain.RepositoryContext, gitConfigured, gitLabConfigured bool) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	gitlabNamed, otherNamed := false, false
+	gitlabCount, otherCount := 0, 0
+	for _, rc := range repositories {
+		switch rc.Provider {
+		case "gitlab":
+			gitlabCount++
+			if name := strings.TrimSpace(rc.Name); name != "" && strings.Contains(msg, name) {
+				gitlabNamed = true
+			}
+		case domain.RepositoryProviderSSH:
+		default:
+			otherCount++
+			if name := strings.TrimSpace(rc.Name); name != "" && strings.Contains(msg, name) {
+				otherNamed = true
+			}
+		}
+	}
+	if (gitlabNamed && !otherNamed) || (gitlabCount > 0 && otherCount == 0) {
+		return explainGitLabAuthFailure(err, gitLabConfigured)
+	}
+	return explainGitAuthFailure(err, gitConfigured)
 }
 
 const gitAuthIncludeFile = "agentflow.auth"

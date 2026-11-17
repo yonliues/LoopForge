@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,7 +233,9 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 			}
 		}
 	}
-	bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail)
+	if err := bindRunnerRepositories(invocation, run, sb.credentialSnapshot().GitToken, sb.credentialSnapshot().GitLabToken, sb.credentialSnapshot().GitUserName, sb.credentialSnapshot().GitUserEmail); err != nil {
+		return "", err
+	}
 	reported := sb.reportedOutputs(node.ID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -307,7 +310,7 @@ func (e *Engine) dispatchRunnerTask(ctx context.Context, runnerID string, run do
 		if final.ExitCode != nil {
 			msg = fmt.Sprintf("%s (exit %d)", msg, *final.ExitCode)
 		}
-		return "", explainGitAuthFailure(errors.New(msg), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "")
+		return "", explainRepositoryAuthFailure(errors.New(msg), run.RepositoryContexts(), strings.TrimSpace(sb.credentialSnapshot().GitToken) != "", strings.TrimSpace(sb.credentialSnapshot().GitLabToken) != "")
 	case domain.RunnerTaskCanceled:
 		return "", errors.New("runner task canceled")
 	default:
@@ -331,13 +334,28 @@ func resolveRunnerResumeSessionID(run domain.Run, nodeID string, options runtime
 	return ""
 }
 
-func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitToken, gitUserName, gitUserEmail string) {
+func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run, gitToken, gitLabToken, gitUserName, gitUserEmail string) error {
 	if invocation == nil {
-		return
+		return nil
+	}
+	legacy := strings.TrimSpace(run.Repository.CloneURL) != "" && len(run.Repositories) == 0
+	if legacy {
+		if _, _, err := runnerRepositoryToken(run.Repository, gitToken, gitLabToken); err != nil {
+			return err
+		}
+	}
+	for _, rc := range run.RepositoryContexts() {
+		if strings.TrimSpace(rc.CloneURL) == "" {
+			continue
+		}
+		if _, _, err := runnerRepositoryToken(rc, gitToken, gitLabToken); err != nil {
+			return err
+		}
 	}
 	invocation.GitUserName = strings.TrimSpace(gitUserName)
 	invocation.GitUserEmail = strings.TrimSpace(gitUserEmail)
-	if strings.TrimSpace(run.Repository.CloneURL) != "" && len(run.Repositories) == 0 {
+	if legacy {
+		token, useSSH, _ := runnerRepositoryToken(run.Repository, gitToken, gitLabToken)
 		invocation.Repository = &domain.RunnerRepository{
 			RepositoryID:              run.Repository.RepositoryID,
 			Name:                      run.Repository.Name,
@@ -346,14 +364,15 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                run.Repository.WorkBranch,
 			RequireExistingWorkBranch: run.Repository.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       run.Repository.CreateNewWorkBranch,
-			GitToken:                  gitToken,
-			UseSSH:                    run.Repository.Provider == domain.RepositoryProviderSSH,
+			GitToken:                  token,
+			UseSSH:                    useSSH,
 		}
 	}
 	for _, rc := range run.RepositoryContexts() {
 		if strings.TrimSpace(rc.CloneURL) == "" {
 			continue
 		}
+		token, useSSH, _ := runnerRepositoryToken(rc, gitToken, gitLabToken)
 		invocation.Repositories = append(invocation.Repositories, domain.RunnerRepository{
 			RepositoryID:              rc.RepositoryID,
 			Name:                      rc.Name,
@@ -362,8 +381,8 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			WorkBranch:                rc.WorkBranch,
 			RequireExistingWorkBranch: rc.RequireExistingWorkBranch,
 			CreateNewWorkBranch:       rc.CreateNewWorkBranch,
-			GitToken:                  gitToken,
-			UseSSH:                    rc.Provider == domain.RepositoryProviderSSH,
+			GitToken:                  token,
+			UseSSH:                    useSSH,
 			Dir:                       rc.WorkspaceDir,
 		})
 	}
@@ -378,6 +397,47 @@ func bindRunnerRepositories(invocation *domain.RunnerInvocation, run domain.Run,
 			}
 		}
 	}
+	return nil
+}
+
+func runnerRepositoryToken(rc domain.RepositoryContext, gitToken, gitLabToken string) (string, bool, error) {
+	switch rc.Provider {
+	case "gitlab":
+		host, _, ok := domain.GitLabIdentityHost(rc.GongfengProjectID)
+		if !ok || !strings.EqualFold(host, repositoryCloneHost(rc.CloneURL)) {
+			return "", false, fmt.Errorf("仓库主机与执行人保存的 GitLab 站点不一致，已停止克隆")
+		}
+		if strings.TrimSpace(gitLabToken) == "" {
+			return "", false, fmt.Errorf("运行责任人未配置 GitLab 令牌，请到「个人配置 → GitLab」填写站点地址和个人访问令牌")
+		}
+		return gitLabToken, false, nil
+	case domain.RepositoryProviderSSH:
+		return "", true, nil
+	default:
+		return gitToken, false, nil
+	}
+}
+
+func repositoryCloneHost(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(raw), "git@") {
+		rest := raw[4:]
+		colon := strings.Index(rest, ":")
+		if colon <= 0 {
+			return ""
+		}
+		return strings.ToLower(rest[:colon])
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "" || port == "80" || port == "443" || port == "22" {
+		return host
+	}
+	return host + ":" + port
 }
 
 func shellSingleQuote(value string) string {
@@ -402,7 +462,9 @@ func (e *Engine) dispatchRunnerScript(ctx context.Context, runnerID string, run 
 	invocation := &domain.RunnerInvocation{
 		ArchivedFiles: e.legacyArchivedWorkspaceFiles(run, nodeID),
 		RunID:         run.ID, NodeID: nodeID, Artifacts: artifacts, ArtifactDirectory: artifactDirectory, Assets: assets, MCPCallServers: assets.MCPServers, HumanContext: run.HumanContext}
-	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	if err := bindRunnerRepositories(invocation, run, gitToken, sb.credentialSnapshot().GitLabToken, gitUserName, gitUserEmail); err != nil {
+		return "", err
+	}
 	reported := sb.reportedOutputs(nodeID)
 	if reported != nil {
 		invocation.Artifacts = nil
@@ -627,7 +689,11 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 		if err != nil {
 			return "", err
 		}
-		task.Invocation = e.gateCommandInvocation(run, nodeID)
+		invocation, err := e.gateCommandInvocation(run, nodeID)
+		if err != nil {
+			return "", err
+		}
+		task.Invocation = invocation
 	}
 	if err := e.repo.PutRunnerTask(task); err != nil {
 		return "", err
@@ -664,13 +730,15 @@ func (e *Engine) dispatchRunnerCommand(ctx context.Context, runnerID, runID, nod
 // runner. Repository entries supply the responsible user's git token; an
 // existing checkout is left in place, and the runner only uses the token to
 // authenticate that command.
-func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) *domain.RunnerInvocation {
+func (e *Engine) gateCommandInvocation(run domain.Run, nodeID string) (*domain.RunnerInvocation, error) {
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation := &domain.RunnerInvocation{
 		RunID: run.ID, NodeID: nodeID, Assets: assets, MCPCallServers: assets.MCPServers}
 	identity := resolveGitIdentity(e.repo, run.ExecutionContext.ResponsibleUserID)
-	bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email)
-	return invocation
+	if err := bindRunnerRepositories(invocation, run, resolveGitToken(e.repo, run.ExecutionContext.ResponsibleUserID), resolveGitLabToken(e.repo, run.ExecutionContext.ResponsibleUserID), identity.name, identity.email); err != nil {
+		return nil, err
+	}
+	return invocation, nil
 }
 
 // NotifyRunnerTaskChanged wakes workflow goroutines waiting for a runner task

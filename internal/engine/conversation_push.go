@@ -31,13 +31,25 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 	if WorkspaceRunID(run) != run.ID {
 		return nil, fmt.Errorf("子 SOP 共享父任务工作区，请从父任务提交")
 	}
+	gitLabToken := ""
+	if user, ok := e.repo.User(requesterID); ok {
+		gitLabToken = strings.TrimSpace(user.GitLabToken)
+	}
 	var repositories []domain.RepositoryContext
 	for _, rc := range run.RepositoryContexts() {
 		if rc.ReadOnly || strings.TrimSpace(rc.CloneURL) == "" || strings.TrimSpace(rc.WorkBranch) == "" {
 			continue
 		}
-		if rc.Provider != domain.RepositoryProviderSSH && strings.TrimSpace(gitToken) == "" {
-			return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
+		switch rc.Provider {
+		case domain.RepositoryProviderSSH:
+		case "gitlab":
+			if gitLabToken == "" {
+				return nil, fmt.Errorf("%s: 运行责任人未配置 GitLab 令牌，请到「个人配置 → GitLab」填写站点地址和个人访问令牌", rc.Name)
+			}
+		default:
+			if strings.TrimSpace(gitToken) == "" {
+				return nil, fmt.Errorf("%s: 未配置 Git Token，无法推送工作分支。%s", rc.Name, gitTokenFixHint)
+			}
 		}
 		repositories = append(repositories, rc)
 	}
@@ -92,7 +104,11 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 			head, err = gitwork.PushWorkBranch(ctx, dir, rc.WorkBranch, message)
 		}
 		if err != nil {
-			return heads, explainGitAuthFailure(fmt.Errorf("%s: git push %s: %w", rc.Name, rc.WorkBranch, err), true)
+			wrapped := fmt.Errorf("%s: git push %s: %w", rc.Name, rc.WorkBranch, err)
+			if rc.Provider == "gitlab" {
+				return heads, explainGitLabAuthFailure(wrapped, gitLabToken != "")
+			}
+			return heads, explainGitAuthFailure(wrapped, true)
 		}
 		if head == "" {
 			head, _ = gitwork.RevParse(ctx, dir, "HEAD")
@@ -101,7 +117,11 @@ func (e *Engine) PushConversationWorkspace(ctx context.Context, runID string, re
 		if sharedTarget != "" {
 			merged, conflicts, mergeErr := gitwork.MergeWorkIntoSharedBranch(ctx, dir, rc.WorkBranch, sharedTarget)
 			if mergeErr != nil {
-				return heads, explainGitAuthFailure(fmt.Errorf("%s: 直推 %s: %w", rc.Name, sharedTarget, mergeErr), true)
+				wrapped := fmt.Errorf("%s: 直推 %s: %w", rc.Name, sharedTarget, mergeErr)
+				if rc.Provider == "gitlab" {
+					return heads, explainGitLabAuthFailure(wrapped, gitLabToken != "")
+				}
+				return heads, explainGitAuthFailure(wrapped, true)
 			}
 			if len(conflicts) > 0 {
 				return heads, fmt.Errorf("%s: 合并 %s 进 %s 有冲突，没有推送：%s", rc.Name, rc.WorkBranch, sharedTarget, strings.Join(conflicts, ", "))
@@ -129,7 +149,13 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		return nil, fmt.Errorf("执行机器 %s 的 runner 版本是 %s，还不支持直推共享分支（需要 %s 及以上）；请先升级 runner，或改用 MR 提交", runnerID, strings.TrimSpace(runner.RunnerVersion), domain.RunnerVersionSharedPush)
 	}
 	invocation := &domain.RunnerInvocation{RunID: run.ID, NodeID: conversationPushNode}
-	bindRunnerRepositories(invocation, run, gitToken, gitUserName, gitUserEmail)
+	gitLabToken := ""
+	if user, ok := e.repo.User(requesterID); ok {
+		gitLabToken = strings.TrimSpace(user.GitLabToken)
+	}
+	if err := bindRunnerRepositories(invocation, run, gitToken, gitLabToken, gitUserName, gitUserEmail); err != nil {
+		return nil, err
+	}
 	invocation.Repository = nil
 	wanted := map[string]bool{}
 	for _, rc := range repositories {
@@ -175,7 +201,7 @@ func (e *Engine) pushConversationOnRunner(ctx context.Context, runnerID string, 
 		if msg == "" {
 			msg = "执行机器推送工作分支失败（" + final.Status + "）"
 		}
-		return nil, explainGitAuthFailure(fmt.Errorf("git push: %s", msg), true)
+		return nil, explainRepositoryAuthFailure(fmt.Errorf("git push: %s", msg), repositories, strings.TrimSpace(gitToken) != "", gitLabToken != "")
 	}
 	heads := []domain.RunnerWorkBranchHead{}
 	if strings.TrimSpace(final.Result) != "" {
