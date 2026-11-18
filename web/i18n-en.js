@@ -182,3 +182,22 @@ Object.assign(window.LF_I18N_EN,{
 });
 Object.assign(window.LF_I18N_EN,{"澄清将使用这位责任人的凭据：":"Clarification runs on this responsible user's credentials:","该框架暂无可用模型，请先在个人配置里添加":"This framework has no model yet; add one in personal settings","需求澄清 · 默认框架与模型":"Requirement clarification · default framework and model","已失效，当前用 CodeBuddy":"No longer available; currently using CodeBuddy","你是需求责任人（或项目 Owner）时，澄清默认用它；澄清时可以临时改，临时选择不写回这里。":"When you own the requirement (or the project), clarification uses this by default. You can switch per clarification without changing this setting."});
 Object.assign(window.LF_I18N_EN,{"选择框架":"Choose a framework","CodeBuddy 默认":"CodeBuddy default","已保存需求澄清的默认框架":"Saved the default clarification framework","偏好":"Preference","请先在个人配置中配置":"Add the API key in personal settings for","澄清将使用这位责任人的凭据":"Clarification runs on this responsible user's credentials"});
+Object.assign(window.LF_I18N_EN,{
+  "同步 GitLab":"Sync GitLab",
+  "只同步 GitLab":"Sync GitLab only",
+  "GitLab":"GitLab",
+  "GitLab 令牌":"GitLab token",
+  "GitLab 地址":"GitLab site",
+  "https://git.example.com":"https://git.example.com",
+  "克隆自建 GitLab、同步 Issue、提交 Merge Request":"Clone a self-hosted GitLab repository, sync issues, and open merge requests",
+  "用于访问你保存的自建 GitLab 站点：克隆、推送、同步 Issue 和 Merge Request。":"Used for the self-hosted GitLab site saved on your account: clone, push, sync issues, and merge requests.",
+  "在 GitLab 创建个人访问令牌，并勾选 api 权限":"Create a GitLab personal access token and enable the api scope",
+  "前往 GitLab 申请个人访问令牌":"Create a GitLab personal access token",
+  "填写站点根地址和令牌。保存时会先向该站点校验":"Enter the site root and token. Saving checks them against that site first",
+  "需要 api 权限。保存时会校验站点地址和令牌":"The api scope is required. Saving checks the site and token",
+  "站点根地址，不要带路径":"Site root only, with no path",
+  "自建 GitLab 仓库将无法克隆、同步或提交 Merge Request。":"Self-hosted GitLab repositories cannot be cloned, synced, or merged.",
+  "粘贴 GitHub 地址，或与项目所有者已保存的 GitLab 站点同主机的地址。其他 SSH 主机仍只做克隆。":"Paste a GitHub URL, or a URL on the same host as the GitLab site saved by the project owner. Other SSH hosts stay clone-only.",
+  "GitLab已关闭，不能触发 SOP":"The GitLab item is closed and cannot start an SOP",
+  "GitLab已关闭，不能触发":"GitLab item is closed and cannot start"
+});

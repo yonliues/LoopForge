@@ -67,6 +67,32 @@ func (h *usersHandlers) user(c *gin.Context) {
 			return
 		}
 	}
+	if !body.GitLabClear && (strings.TrimSpace(body.GitLabBaseURL) != "" || strings.TrimSpace(body.GitLabToken) != "") {
+		site := strings.TrimSpace(body.GitLabBaseURL)
+		token := strings.TrimSpace(body.GitLabToken)
+		if owner, ok := h.repo.User(id); ok {
+			if site == "" {
+				site = strings.TrimSpace(owner.GitLabBaseURL)
+			}
+			if token == "" {
+				token = strings.TrimSpace(owner.GitLabToken)
+			}
+		}
+		if site == "" || token == "" {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "请同时填写 GitLab 地址和令牌"})
+			return
+		}
+		if !validGitLabSite(site) {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": "GitLab 地址必须是不带路径的 HTTP(S) 站点根"})
+			return
+		}
+		if err := verifyGitLabUser(c.Request.Context(), site, token); err != nil {
+			c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		body.GitLabBaseURL = site
+		body.GitLabToken = token
+	}
 	saved, err := h.repo.UpdateUserCredentials(id, body)
 	if err != nil {
 		respond(c, err)

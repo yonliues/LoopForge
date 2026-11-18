@@ -61,7 +61,10 @@ func TestGateCommandInvocationCarriesResponsibleGitToken(t *testing.T) {
 			WorkspaceDir: "skillhub",
 		}},
 	}
-	invocation := (&Engine{repo: s}).gateCommandInvocation(run, "fix")
+	invocation, err := (&Engine{repo: s}).gateCommandInvocation(run, "fix")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if invocation == nil || len(invocation.Repositories) != 1 {
 		t.Fatalf("invocation = %+v", invocation)
 	}
@@ -82,7 +85,7 @@ func TestBindRunnerRepositoriesUsesConfiguredMainBranchWhenBaseIsEmpty(t *testin
 		{Repositories: []domain.RepositoryContext{repository}},
 	} {
 		invocation := &domain.RunnerInvocation{}
-		bindRunnerRepositories(invocation, run, "", "", "")
+		bindRunnerRepositories(invocation, run, "", "", "", "")
 		if len(invocation.Repositories) != 1 || invocation.Repositories[0].Ref != repository.DefaultBranch {
 			t.Fatalf("runner must receive the configured main branch: %+v", invocation)
 		}

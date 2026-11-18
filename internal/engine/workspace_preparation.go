@@ -138,7 +138,9 @@ func (e *Engine) preparedWorkspaceRequest(run domain.Run, request domain.RunnerW
 	request.Repositories = run.RepositoryContexts()
 	credentials := e.resolveRunCredentials(run)
 	invocation := &domain.RunnerInvocation{}
-	bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitUserName, credentials.GitUserEmail)
+	if err := bindRunnerRepositories(invocation, run, credentials.GitToken, credentials.GitLabToken, credentials.GitUserName, credentials.GitUserEmail); err != nil {
+		return request, err
+	}
 	invocation.GitSSHUserID = 0
 	assets := e.resolveScriptMCPAssets(run.ExecutionContext.ProjectID, run.ExecutionContext.ResponsibleUserID)
 	invocation.Assets = assets

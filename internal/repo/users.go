@@ -24,6 +24,8 @@ type userWithConfig struct {
 	DeptName                     string     `gorm:"column:dept_name"`
 	PlatformRole                 string     `gorm:"column:platform_role"`
 	GitToken                     *string    `gorm:"column:git_token"`
+	GitLabBaseURL                *string    `gorm:"column:gitlab_base_url"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token"`
 	GitSSHKeyConfigured          bool       `gorm:"column:git_ssh_key_configured"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
@@ -43,7 +45,7 @@ type userWithConfig struct {
 
 const userSelectColumns = `u.id, u.staff_id, u.login_name, u.chinese_name, u.dept_id, u.dept_name,
 	COALESCE(u.platform_role, '') AS platform_role,
-	c.git_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
+	c.git_token, c.gitlab_base_url, c.gitlab_token, EXISTS (SELECT 1 FROM user_git_ssh_keys k WHERE k.user_id = u.id) AS git_ssh_key_configured,
 	c.gongfeng_refresh_token, c.gongfeng_token_expires_at, c.codebuddy_api_key, COALESCE(c.codebuddy_internet_environment, '') AS codebuddy_internet_environment, COALESCE(c.clarify_model, '') AS clarify_model,
 	c.codex_api_key, c.codex_base_url, c.codex_models, c.claude_code_api_key, c.claude_code_base_url, c.claude_code_models,
 	c.agent_cli_credentials,
@@ -54,10 +56,16 @@ func (r userWithConfig) toDomain() domain.User {
 		ID: r.ID, StaffID: r.StaffID, LoginName: r.LoginName, ChineseName: r.ChineseName,
 		DeptID: r.DeptID, DeptName: r.DeptName, PlatformRole: r.PlatformRole,
 		CodeBuddyInternetEnvironment: r.CodeBuddyInternetEnvironment, ClarifyModel: r.ClarifyModel,
-		GitSSHKeyConfigured:          r.GitSSHKeyConfigured,
+		GitSSHKeyConfigured: r.GitSSHKeyConfigured,
 	}
 	if r.GitToken != nil {
 		u.GitToken = *r.GitToken
+	}
+	if r.GitLabBaseURL != nil {
+		u.GitLabBaseURL = *r.GitLabBaseURL
+	}
+	if r.GitLabToken != nil {
+		u.GitLabToken = *r.GitLabToken
 	}
 	if r.GongfengRefreshToken != nil {
 		u.GongfengRefreshToken = *r.GongfengRefreshToken
@@ -155,6 +163,8 @@ func (r *UsersRepo) PutUser(v domain.User) error {
 		// Authentication refreshes identity fields only. Credentials are managed
 		// through UpdateUserCredentials and must survive every login refresh.
 		v.GitToken = old.GitToken
+		v.GitLabBaseURL = old.GitLabBaseURL
+		v.GitLabToken = old.GitLabToken
 		v.GongfengRefreshToken = old.GongfengRefreshToken
 		v.GongfengTokenExpiresAt = old.GongfengTokenExpiresAt
 		v.CodexAPIKey, v.CodexBaseURL, v.CodexModels = old.CodexAPIKey, old.CodexBaseURL, old.CodexModels
@@ -226,6 +236,8 @@ func (r *UsersRepo) writeUser(v domain.User) (domain.User, error) {
 
 func userHasConfig(user domain.User) bool {
 	return user.GitToken != "" ||
+		user.GitLabBaseURL != "" ||
+		user.GitLabToken != "" ||
 		user.GongfengRefreshToken != "" ||
 		user.CodeBuddyAPIKey != "" ||
 		user.CodeBuddyInternetEnvironment != "" ||
@@ -242,6 +254,9 @@ func userHasConfig(user domain.User) bool {
 type UserCredentialUpdate struct {
 	GitToken                     string             `json:"gitToken"`
 	GitTokenClear                bool               `json:"gitTokenClear"`
+	GitLabBaseURL                string             `json:"gitLabBaseUrl"`
+	GitLabToken                  string             `json:"gitLabToken"`
+	GitLabClear                  bool               `json:"gitLabClear"`
 	CodeBuddyAPIKey              string             `json:"codeBuddyApiKey"`
 	CodeBuddyAPIKeyClear         bool               `json:"codeBuddyApiKeyClear"`
 	CodeBuddyInternetEnvironment *string            `json:"codeBuddyInternetEnvironment"`
@@ -272,6 +287,17 @@ func (r *UsersRepo) UpdateUserCredentials(id int64, update UserCredentialUpdate)
 	user, ok := r.User(id)
 	if !ok {
 		return domain.User{}, errors.New("user not found")
+	}
+	if update.GitLabClear {
+		user.GitLabBaseURL = ""
+		user.GitLabToken = ""
+	} else {
+		if value := strings.TrimSpace(update.GitLabBaseURL); value != "" {
+			user.GitLabBaseURL = value
+		}
+		if value := strings.TrimSpace(update.GitLabToken); value != "" {
+			user.GitLabToken = value
+		}
 	}
 	if update.GitTokenClear {
 		user.GitToken = ""
@@ -356,6 +382,8 @@ func (r *UsersRepo) writeUserConfig(v domain.User) error {
 	values := map[string]any{
 		"user_id":                v.ID,
 		"git_token":              nullableString(v.GitToken),
+		"gitlab_base_url":        nullableString(v.GitLabBaseURL),
+		"gitlab_token":           nullableString(v.GitLabToken),
 		"gongfeng_refresh_token": nullableString(v.GongfengRefreshToken), "gongfeng_token_expires_at": timePtr(v.GongfengTokenExpiresAt),
 		"codebuddy_api_key":              nullableString(v.CodeBuddyAPIKey),
 		"codebuddy_internet_environment": v.CodeBuddyInternetEnvironment, "clarify_model": v.ClarifyModel,

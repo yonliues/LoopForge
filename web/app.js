@@ -1221,6 +1221,7 @@ function bind(){
   $('#revisionRestore')&&($('#revisionRestore').onclick=restoreSelectedRevision);
   $('#newIssue').onclick=openRequirementWizard;
   $('#importGitHubIssues').onclick=syncNow;
+  $('#importGitLabIssues')&&($('#importGitLabIssues').onclick=syncNow);
   $('#importTAPDIssue')&&($('#importTAPDIssue').onclick=openImportTAPDModal);
   $$('.import-tapd-close').forEach(b=>b.onclick=()=>$('#importTAPDModal').classList.remove('open'));
   $('#importTAPDForm')&&($('#importTAPDForm').onsubmit=importTAPDStory);

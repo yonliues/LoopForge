@@ -429,7 +429,7 @@ function issueExecutionBlocked(i){
   if(blocked)return blocked;
   return'';
 }
-function closedTrackerHint(issue){const label=issue?.source==='gongfeng'?'工蜂':'外部工作项';return `<span class="muted" title="${label}已关闭，不能触发 SOP">${label}已关闭，不能触发</span>`}
+function closedTrackerHint(issue){const label=issue?.source==='gongfeng'?'工蜂':issue?.source==='gitlab'?'GitLab':issue?.source==='github'?'GitHub':'外部工作项';return `<span class="muted" title="${label}已关闭，不能触发 SOP">${label}已关闭，不能触发</span>`}
 function deliveredHint(issue){const label=deliveryLockedLabel(issue);return `<span class="muted" title="${escapeHTML(label)}，请在详情中重新打开后才可触发">${escapeHTML(label)}</span>`}
 function reopenDeliveredButton(issue,{cls='button primary small'}={}){if(issueTrackerClosed(issue)||(!issueManuallyClosed(issue)&&!deliveryLocked(issue)))return'';return `<button type="button" class="${cls}" data-reopen-issue="${escapeHTML(issue.id)}">重新打开</button>`}
 function canRetriggerIssue(issue,run){

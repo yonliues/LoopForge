@@ -221,8 +221,9 @@ func (e *Engine) acquireRunEnvironment(ctx context.Context, run domain.Run, prof
 func (e *Engine) resolveRunCredentials(run domain.Run) runtime.RunCredentials {
 	userID := run.ExecutionContext.ResponsibleUserID
 	credentials := runtime.RunCredentials{
-		CodeBuddy: resolveCodeBuddyCredential(e.repo, userID),
-		GitToken:  resolveGitToken(e.repo, userID),
+		CodeBuddy:   resolveCodeBuddyCredential(e.repo, userID),
+		GitToken:    resolveGitToken(e.repo, userID),
+		GitLabToken: resolveGitLabToken(e.repo, userID),
 	}
 	credentials.GitSSHKeys = e.repo.GitSSHKeysForRemotes(userID, sshRepositoryURLs(run.RepositoryContexts()))
 	identity := resolveGitIdentity(e.repo, userID)

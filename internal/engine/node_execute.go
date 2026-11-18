@@ -491,7 +491,7 @@ func (e *Engine) executeNode(ctx context.Context, runID string, wf domain.Workfl
 			}
 		}
 		if err := prepareRepositories(ctx, sb.Workspace(), current.RepositoryContexts()); err != nil {
-			return explainGitAuthFailure(fmt.Errorf("repository checkout: %w", err), strings.TrimSpace(gitTok) != "")
+			return explainRepositoryAuthFailure(fmt.Errorf("repository checkout: %w", err), current.RepositoryContexts(), strings.TrimSpace(gitTok) != "", strings.TrimSpace(sb.credentialSnapshot().GitLabToken) != "")
 		}
 		for _, dir := range repoWorkspaces {
 			if err := runtime.ProtectProjectAgentGitIndex(ctx, dir, sb.Driver()); err != nil {

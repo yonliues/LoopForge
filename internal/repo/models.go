@@ -35,6 +35,8 @@ func (userRow) TableName() string { return "users" }
 type userConfigRow struct {
 	UserID                       int64      `gorm:"column:user_id;primaryKey"`
 	GitToken                     *string    `gorm:"column:git_token;type:text"`
+	GitLabBaseURL                *string    `gorm:"column:gitlab_base_url;type:text"`
+	GitLabToken                  *string    `gorm:"column:gitlab_token;type:text"`
 	GongfengRefreshToken         *string    `gorm:"column:gongfeng_refresh_token;type:text"`
 	GongfengTokenExpiresAt       *time.Time `gorm:"column:gongfeng_token_expires_at"`
 	CodeBuddyAPIKey              *string    `gorm:"column:codebuddy_api_key;type:text"`
